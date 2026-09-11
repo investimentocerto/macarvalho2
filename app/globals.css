@@ -1,0 +1,81 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
+
+@theme {
+  --color-primary: #954a00;
+  --color-primary-container: #f47d00;
+  --color-on-primary: #ffffff;
+  --color-on-primary-container: #562800;
+  --color-primary-fixed: #ffdcc6;
+  --color-primary-fixed-dim: #ffb785;
+  --color-on-primary-fixed: #301400;
+  --color-on-primary-fixed-variant: #713700;
+
+  --color-secondary: #0d6e1f;
+  --color-secondary-container: #9df897;
+  --color-on-secondary: #ffffff;
+  --color-on-secondary-container: #187425;
+  --color-secondary-fixed: #9df897;
+  --color-secondary-fixed-dim: #81db7e;
+  --color-on-secondary-fixed: #002204;
+  --color-on-secondary-fixed-variant: #005313;
+
+  --color-tertiary: #5f5e5e;
+  --color-tertiary-container: #9f9d9d;
+  --color-on-tertiary-container: #353535;
+  --color-tertiary-fixed: #e5e2e1;
+  --color-tertiary-fixed-dim: #c8c6c5;
+  --color-on-tertiary-fixed: #1b1c1c;
+  --color-on-tertiary-fixed-variant: #474746;
+
+  --color-surface: #faf9f7;
+  --color-surface-dim: #dadad8;
+  --color-surface-bright: #faf9f7;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f4f3f1;
+  --color-surface-container: #efeeec;
+  --color-surface-container-high: #e9e8e6;
+  --color-surface-container-highest: #e3e2e0;
+  --color-surface-variant: #e3e2e0;
+
+  --color-background: #faf9f7;
+  --color-on-background: #1a1c1b;
+  --color-on-surface: #1a1c1b;
+  --color-on-surface-variant: #574335;
+  --color-outline: #8a7263;
+  --color-outline-variant: #dec1af;
+
+  --color-error: #ba1a1a;
+  --color-error-container: #ffdad6;
+  --color-on-error: #ffffff;
+  --color-on-error-container: #93000a;
+
+  --color-vibrant-orange: #f47d00;
+  --color-industrial-charcoal: #212121;
+  --color-leaf-green: #4ba24d;
+  --color-border-gray: #e0e0e0;
+  --color-off-white-surface: #f9f8f6;
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.25s ease-out forwards;
+}
+
+.animate-slideUp {
+  animation: slideUp 0.3s ease-out forwards;
+}

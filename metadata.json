@@ -1,0 +1,6 @@
+{
+  "name": "MaCarvalho",
+  "description": "Sistema de Gestão e Controle de Produção Artesanal - MaCarvalho Cosméticos Artesanais. Controle de produtos, estrutura técnica (BOM), estoque, compras, vendas e ordens de produção.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
