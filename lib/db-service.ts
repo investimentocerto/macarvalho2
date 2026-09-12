@@ -6,6 +6,7 @@ import {
   InventoryItem, 
   StockMovement, 
   ProductionOrder, 
+  ProductionEntry,
   SaleRecord,
   ProductionProcess,
   Equipment
@@ -149,14 +150,19 @@ export const dbService = {
     return (data || []).map((row: any) => ({
       id: row.id,
       opNumber: row.op_number,
+      productId: row.product_id || undefined,
       productName: row.product_name,
       productCode: row.product_code,
       progress: Number(row.progress || 0),
-      forecast: row.forecast,
+      forecast: row.forecast || undefined,
       status: row.status,
-      line: row.line,
+      line: row.line || undefined,
       quantity: Number(row.quantity || 1),
       unit: row.unit || 'un',
+      openingDate: row.opening_date || row.created_at || new Date().toISOString(),
+      productionStart: row.production_start || undefined,
+      productionEnd: row.production_end || undefined,
+      producedQuantity: Number(row.produced_quantity || 0),
     }));
   },
 
@@ -167,6 +173,7 @@ export const dbService = {
     const { error } = await supabase.from('production_orders').upsert({
       id: order.id,
       op_number: order.opNumber,
+      product_id: order.productId,
       product_name: order.productName,
       product_code: order.productCode,
       progress: order.progress,
@@ -175,9 +182,51 @@ export const dbService = {
       line: order.line,
       quantity: order.quantity,
       unit: order.unit,
+      opening_date: order.openingDate,
+      production_start: order.productionStart,
+      production_end: order.productionEnd,
+      produced_quantity: order.producedQuantity || 0,
       updated_at: new Date().toISOString(),
     });
 
+    if (error) {
+      console.error('Erro ao salvar Ordem de Produção no Supabase:', error.message, error.details || '');
+    }
+    return !error;
+  },
+
+  // LANÇAMENTOS DE PRODUÇÃO POR ETAPA
+  async fetchProductionEntries(): Promise<ProductionEntry[] | null> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return null;
+    const { data, error } = await supabase.from('production_entries').select('*').order('entry_date', { ascending: false });
+    if (error) {
+      console.warn('Erro ao carregar lançamentos de produção:', error.message);
+      return null;
+    }
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      orderId: row.order_id,
+      stepId: row.step_id,
+      quantityProduced: Number(row.quantity_produced || 0),
+      startedAt: row.started_at || undefined,
+      endedAt: row.ended_at || undefined,
+      entryDate: row.entry_date,
+    }));
+  },
+
+  async saveProductionEntry(entry: ProductionEntry): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return false;
+    const { error } = await supabase.from('production_entries').upsert({
+      id: entry.id,
+      order_id: entry.orderId,
+      step_id: entry.stepId,
+      quantity_produced: entry.quantityProduced,
+      started_at: entry.startedAt,
+      ended_at: entry.endedAt,
+      entry_date: entry.entryDate,
+    });
     return !error;
   },
 

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ProductionOrder, SaleRecord, ViewMode } from '@/lib/types';
+import { BOMComponent, ProcessStepItem, Product, ProductionEntry, ProductionOrder, SaleRecord, ViewMode } from '@/lib/types';
 import { 
   ClipboardList, 
   ShoppingCart, 
@@ -29,6 +29,11 @@ interface PurchaseItem {
 interface OperationalViewsProps {
   view: ViewMode;
   productionOrders: ProductionOrder[];
+  products: Product[];
+  bomComponents: BOMComponent[];
+  processSteps: ProcessStepItem[];
+  productionEntries: ProductionEntry[];
+  onAddProductionEntry: (entry: ProductionEntry) => void;
   salesRecords: SaleRecord[];
   onAddProductionOrder?: (order: ProductionOrder) => void;
   onUpdateOpStatus: (opId: string, newStatus: ProductionOrder['status']) => void;
@@ -39,6 +44,11 @@ interface OperationalViewsProps {
 export const OperationalViews: React.FC<OperationalViewsProps> = ({
   view,
   productionOrders,
+  products,
+  bomComponents,
+  processSteps,
+  productionEntries,
+  onAddProductionEntry,
   salesRecords,
   onAddProductionOrder,
   onUpdateOpStatus,
@@ -54,8 +64,13 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
   const [newOpNumber, setNewOpNumber] = useState('OP-2026-001');
   const [newOpProduct, setNewOpProduct] = useState('');
   const [newOpQuantity, setNewOpQuantity] = useState('50');
-  const [newOpLine, setNewOpLine] = useState('Bancada Artesanal - Saboaria');
-  const [newOpForecast, setNewOpForecast] = useState('Hoje');
+  const [newOpOpeningDate, setNewOpOpeningDate] = useState(new Date().toISOString().slice(0, 10));
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [entryStepId, setEntryStepId] = useState('');
+  const [entryQuantity, setEntryQuantity] = useState('0');
+  const [entryStart, setEntryStart] = useState('');
+  const [entryEnd, setEntryEnd] = useState('');
+  const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10));
 
   // New Sale Form
   const [newSaleClient, setNewSaleClient] = useState('');
@@ -72,22 +87,23 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
 
   const handleCreateOP = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newOpProduct) {
-      onNotify('Por favor informe o nome do produto da OP.');
+    const product = products.find((item) => item.id === newOpProduct);
+    if (!product) {
+      onNotify('Selecione um produto cadastrado.');
       return;
     }
 
     const order: ProductionOrder = {
       id: `op-${Date.now()}`,
       opNumber: newOpNumber,
-      productName: newOpProduct,
-      productCode: `PRD-${Math.floor(100 + Math.random() * 900)}`,
-      progress: 10,
-      forecast: newOpForecast,
-      status: 'Em Andamento',
-      line: newOpLine,
+      productId: product.id,
+      productName: product.name,
+      productCode: product.code,
+      progress: 0,
+      status: 'Planejada',
       quantity: Number(newOpQuantity) || 1,
-      unit: 'UN',
+      unit: product.unit || 'UN',
+      openingDate: newOpOpeningDate,
     };
 
     if (onAddProductionOrder) {
@@ -95,8 +111,36 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
     }
     setIsOpModalOpen(false);
     setNewOpProduct('');
+    setNewOpOpeningDate(new Date().toISOString().slice(0, 10));
     setNewOpNumber(`OP-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
     onNotify(`Ordem de Produção ${order.opNumber} criada com sucesso!`);
+  };
+
+  const selectedOrder = productionOrders.find((order) => order.id === selectedOrderId);
+  const selectedRoute = selectedOrder
+    ? processSteps.filter((step) => !step.productId || step.productId === selectedOrder.productId)
+    : [];
+  const selectedBOM = selectedOrder
+    ? bomComponents.map((component) => ({ ...component, requiredQuantity: component.quantity * selectedOrder.quantity }))
+    : [];
+
+  const handleCreateProductionEntry = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedOrder || !entryStepId) return;
+    const entry: ProductionEntry = {
+      id: `entry-${Date.now()}`,
+      orderId: selectedOrder.id,
+      stepId: entryStepId,
+      quantityProduced: Number(entryQuantity) || 0,
+      startedAt: entryStart || undefined,
+      endedAt: entryEnd || undefined,
+      entryDate,
+    };
+    onAddProductionEntry(entry);
+    setEntryQuantity('0');
+    setEntryStart('');
+    setEntryEnd('');
+    onNotify('Lançamento de produção registrado.');
   };
 
   const handleCreateSale = (e: React.FormEvent) => {
@@ -195,10 +239,9 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
                   <tr className="bg-[#f4f3f1] text-[#574335] uppercase font-semibold border-b border-[#dec1af]/40">
                     <th className="py-3.5 px-4">Número OP</th>
                     <th className="py-3.5 px-4">Produto</th>
-                    <th className="py-3.5 px-4">Bancada / Linha</th>
                     <th className="py-3.5 px-4 text-center">Quantidade</th>
                     <th className="py-3.5 px-4">Progresso</th>
-                    <th className="py-3.5 px-4">Previsão</th>
+                    <th className="py-3.5 px-4">Data de Abertura</th>
                     <th className="py-3.5 px-4 text-center">Status</th>
                     <th className="py-3.5 px-4 text-center">Ações</th>
                   </tr>
@@ -208,7 +251,6 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
                     <tr key={op.id} className="hover:bg-[#f4f3f1] transition-colors">
                       <td className="py-3.5 px-4 font-mono font-bold text-[#954a00]">{op.opNumber}</td>
                       <td className="py-3.5 px-4 font-bold text-[#1a1c1b]">{op.productName}</td>
-                      <td className="py-3.5 px-4 text-[#574335]">{op.line}</td>
                       <td className="py-3.5 px-4 text-center font-bold text-[#1a1c1b]">{op.quantity} {op.unit || 'un'}</td>
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-2">
@@ -223,7 +265,7 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
                           <span className="text-[11px] font-mono text-[#574335]">{op.progress}%</span>
                         </div>
                       </td>
-                      <td className="py-3.5 px-4 text-[#574335] font-medium">{op.forecast}</td>
+                      <td className="py-3.5 px-4 text-[#574335] font-medium">{new Date(op.openingDate).toLocaleDateString('pt-BR')}</td>
                       <td className="py-3.5 px-4 text-center">
                         <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                           op.status === 'Concluída'
@@ -239,6 +281,9 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
                       </td>
                       <td className="py-3.5 px-4 text-center">
                         <div className="flex items-center justify-center gap-2">
+                          <button onClick={() => setSelectedOrderId(op.id)} className="p-1.5 rounded-lg hover:bg-amber-100 text-[#954a00] transition-colors" title="Lançamentos e separação">
+                            <Layers className="w-4 h-4" />
+                          </button>
                           {op.status === 'Em Andamento' ? (
                             <button
                               onClick={() => onUpdateOpStatus(op.id, 'Parada')}
@@ -273,6 +318,28 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
           )}
         </div>
 
+        {selectedOrder && (
+          <div className="bg-white rounded-2xl shadow-xs border border-[#dec1af]/40 overflow-hidden">
+            <div className="p-4 bg-[#f4f3f1] border-b border-[#dec1af]/30 flex items-center justify-between">
+              <div><h2 className="font-bold text-sm text-[#1a1c1b]">Roteiro de Produção: {selectedOrder.opNumber}</h2><p className="text-[11px] text-[#574335] mt-1">{selectedOrder.productName} | Quantidade da OP: {selectedOrder.quantity} {selectedOrder.unit}</p></div>
+              <button onClick={() => setSelectedOrderId(null)} className="p-1.5 text-[#574335] hover:text-[#954a00]"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-4 grid grid-cols-1 xl:grid-cols-2 gap-5">
+              <div>
+                <h3 className="font-bold text-xs text-[#1a1c1b] mb-2">Lançamento por etapa</h3>
+                <form onSubmit={handleCreateProductionEntry} className="space-y-3 text-xs">
+                  <select required value={entryStepId} onChange={(e) => setEntryStepId(e.target.value)} className="w-full p-2.5 border border-[#dec1af] rounded-lg bg-white"><option value="">Selecione uma etapa do roteiro</option>{selectedRoute.map((step) => <option key={step.id} value={step.id}>{step.stepNumber} - {step.title}</option>)}</select>
+                  <div className="grid grid-cols-2 gap-3"><label className="font-semibold">Quantidade produzida<input type="number" min="0" step="0.01" value={entryQuantity} onChange={(e) => setEntryQuantity(e.target.value)} className="w-full mt-1 p-2.5 border border-[#dec1af] rounded-lg font-normal" /></label><label className="font-semibold">Data do lançamento<input type="date" required value={entryDate} onChange={(e) => setEntryDate(e.target.value)} className="w-full mt-1 p-2.5 border border-[#dec1af] rounded-lg font-normal" /></label></div>
+                  <div className="grid grid-cols-2 gap-3"><label className="font-semibold">Início<input type="datetime-local" value={entryStart} onChange={(e) => setEntryStart(e.target.value)} className="w-full mt-1 p-2.5 border border-[#dec1af] rounded-lg font-normal" /></label><label className="font-semibold">Término<input type="datetime-local" value={entryEnd} onChange={(e) => setEntryEnd(e.target.value)} className="w-full mt-1 p-2.5 border border-[#dec1af] rounded-lg font-normal" /></label></div>
+                  <button type="submit" className="px-4 py-2 bg-[#954a00] text-white rounded-xl font-bold">Registrar produção</button>
+                </form>
+                <div className="mt-4 space-y-1">{productionEntries.filter((entry) => entry.orderId === selectedOrder.id).map((entry) => <div key={entry.id} className="text-[11px] p-2 bg-[#f4f3f1] rounded-lg">{selectedRoute.find((step) => step.id === entry.stepId)?.title || 'Etapa'}: <b>{entry.quantityProduced}</b> un | {new Date(entry.entryDate).toLocaleDateString('pt-BR')}</div>)}</div>
+              </div>
+              <div><h3 className="font-bold text-xs text-[#1a1c1b] mb-2">Folha de necessidade para separação</h3><div className="border border-[#dec1af]/50 rounded-lg overflow-hidden"><table className="w-full text-xs"><thead className="bg-[#f4f3f1]"><tr><th className="text-left p-2">Insumo</th><th className="text-right p-2">Necessidade</th><th className="text-right p-2">Un.</th></tr></thead><tbody className="divide-y divide-[#e9e8e6]">{selectedBOM.map((item) => <tr key={item.id}><td className="p-2 font-semibold">{item.name}</td><td className="p-2 text-right">{item.requiredQuantity.toFixed(2)}</td><td className="p-2 text-right">{item.unit}</td></tr>)}</tbody></table></div></div>
+            </div>
+          </div>
+        )}
+
         {/* Modal Nova OP */}
         {isOpModalOpen && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
@@ -300,15 +367,16 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
                 </div>
 
                 <div>
-                  <label className="font-semibold text-[#1a1c1b] block mb-1">Cosmético / Produto</label>
-                  <input
-                    type="text"
-                    placeholder="Ex: Sabonete de Argila Branca & Lavanda 120g"
+                  <label className="font-semibold text-[#1a1c1b] block mb-1">Produto *</label>
+                  <select
                     value={newOpProduct}
                     onChange={(e) => setNewOpProduct(e.target.value)}
                     required
-                    className="w-full px-3 py-2 border border-[#dec1af] rounded-lg text-xs focus:ring-1 focus:ring-[#954a00] focus:outline-none"
-                  />
+                    className="w-full px-3 py-2 border border-[#dec1af] rounded-lg text-xs bg-white focus:ring-1 focus:ring-[#954a00] focus:outline-none"
+                  >
+                    <option value="">Selecione um produto cadastrado</option>
+                    {products.map((product) => <option key={product.id} value={product.id}>[{product.code}] {product.name}</option>)}
+                  </select>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
@@ -324,29 +392,9 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="font-semibold text-[#1a1c1b] block mb-1">Previsão</label>
-                    <input
-                      type="text"
-                      placeholder="Ex: 2 dias, 24/11"
-                      value={newOpForecast}
-                      onChange={(e) => setNewOpForecast(e.target.value)}
-                      className="w-full px-3 py-2 border border-[#dec1af] rounded-lg text-xs focus:ring-1 focus:ring-[#954a00] focus:outline-none"
-                    />
+                    <label className="font-semibold text-[#1a1c1b] block mb-1">Data de Abertura *</label>
+                    <input type="date" value={newOpOpeningDate} onChange={(e) => setNewOpOpeningDate(e.target.value)} required className="w-full px-3 py-2 border border-[#dec1af] rounded-lg text-xs focus:ring-1 focus:ring-[#954a00] focus:outline-none" />
                   </div>
-                </div>
-
-                <div>
-                  <label className="font-semibold text-[#1a1c1b] block mb-1">Bancada / Processo</label>
-                  <select
-                    value={newOpLine}
-                    onChange={(e) => setNewOpLine(e.target.value)}
-                    className="w-full px-3 py-2 border border-[#dec1af] rounded-lg text-xs focus:ring-1 focus:ring-[#954a00] focus:outline-none bg-white"
-                  >
-                    <option value="Bancada Artesanal - Saboaria">Bancada Artesanal - Saboaria</option>
-                    <option value="Bancada de Emulsões & Cremes">Bancada de Emulsões & Cremes</option>
-                    <option value="Envase & Rotulagem Manual">Envase & Rotulagem Manual</option>
-                    <option value="Cura e Maturação">Cura e Maturação</option>
-                  </select>
                 </div>
 
                 <div className="flex justify-end gap-2.5 pt-4 border-t border-[#dec1af]/30">

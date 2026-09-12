@@ -9,6 +9,7 @@ import {
   InventoryItem, 
   StockMovement, 
   ProductionOrder, 
+  ProductionEntry,
   SaleRecord,
   ProductionProcess,
   Equipment
@@ -54,6 +55,7 @@ export default function MaCarvalhoApp() {
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>(INITIAL_INVENTORY);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>(INITIAL_MOVEMENTS);
   const [productionOrders, setProductionOrders] = useState<ProductionOrder[]>(INITIAL_PRODUCTION_ORDERS);
+  const [productionEntries, setProductionEntries] = useState<ProductionEntry[]>([]);
   const [salesRecords, setSalesRecords] = useState<SaleRecord[]>(INITIAL_SALES);
 
   // Direct Image Modal State
@@ -89,7 +91,7 @@ export default function MaCarvalhoApp() {
 
     const loadRemoteData = async () => {
       try {
-        const [remoteProds, remoteInv, remoteOps, remoteSales, remoteBom, remoteSteps, remoteMovements, remoteProcs, remoteEquipment] = await Promise.all([
+        const [remoteProds, remoteInv, remoteOps, remoteSales, remoteBom, remoteSteps, remoteMovements, remoteProcs, remoteEquipment, remoteEntries] = await Promise.all([
           dbService.fetchProducts(),
           dbService.fetchInventory(),
           dbService.fetchProductionOrders(),
@@ -99,6 +101,7 @@ export default function MaCarvalhoApp() {
           dbService.fetchStockMovements(),
           dbService.fetchProductionProcesses(),
           dbService.fetchEquipment(),
+          dbService.fetchProductionEntries(),
         ]);
 
         if (remoteProds && remoteProds.length > 0) {
@@ -113,6 +116,7 @@ export default function MaCarvalhoApp() {
         if (remoteMovements && remoteMovements.length > 0) setStockMovements(remoteMovements);
         if (remoteProcs && remoteProcs.length > 0) setProductionProcesses(remoteProcs);
         if (remoteEquipment && remoteEquipment.length > 0) setEquipment(remoteEquipment);
+        if (remoteEntries && remoteEntries.length > 0) setProductionEntries(remoteEntries);
 
         showNotification('Sincronizado com Supabase PostgreSQL!');
       } catch (err) {
@@ -368,6 +372,11 @@ export default function MaCarvalhoApp() {
     showNotification(`Status da OP atualizado para "${newStatus}"!`);
   };
 
+  const handleAddProductionEntry = (entry: ProductionEntry) => {
+    setProductionEntries((prev) => [entry, ...prev]);
+    dbService.saveProductionEntry(entry).catch(() => showNotification('Erro ao salvar lançamento de produção no banco.'));
+  };
+
   // Handler: Navigate to BOM from a selected product
   const handleNavigateToBOM = (prod?: Product) => {
     if (prod) {
@@ -490,10 +499,17 @@ export default function MaCarvalhoApp() {
             <OperationalViews
               view={currentView}
               productionOrders={productionOrders}
+              products={products}
+              bomComponents={bomComponents}
+              processSteps={processSteps}
+              productionEntries={productionEntries}
+              onAddProductionEntry={handleAddProductionEntry}
               salesRecords={salesRecords}
               onAddProductionOrder={(newOp) => {
                 setProductionOrders((prev) => [newOp, ...prev]);
-                dbService.saveProductionOrder(newOp).catch(() => {});
+                dbService.saveProductionOrder(newOp).then((saved) => {
+                  if (!saved && isSupabaseConfigured()) showNotification('Não foi possível salvar a OP no banco. Execute a migration de OPs no Supabase.');
+                });
               }}
               onUpdateOpStatus={handleUpdateOpStatus}
               onAddSaleRecord={(newSale) => {

@@ -100,14 +100,29 @@ export interface StockMovement {
 export interface ProductionOrder {
   id: string;
   opNumber: string;
+  productId?: string;
   productName: string;
   productCode: string;
   progress: number;
-  forecast: string;
+  forecast?: string;
   status: 'Em Andamento' | 'Parada' | 'Concluída' | 'Planejada';
-  line: string;
+  line?: string;
   quantity: number;
   unit: string;
+  openingDate: string;
+  productionStart?: string;
+  productionEnd?: string;
+  producedQuantity?: number;
+}
+
+export interface ProductionEntry {
+  id: string;
+  orderId: string;
+  stepId: string;
+  quantityProduced: number;
+  startedAt?: string;
+  endedAt?: string;
+  entryDate: string;
 }
 
 export interface Equipment {
