@@ -237,7 +237,15 @@ export default function MaCarvalhoApp() {
       }
       return updated;
     });
-    dbService.saveProcessStep(stepForProduct).catch(() => {});
+    dbService.saveProcessStep(stepForProduct).then((saved) => {
+      if (!saved && isSupabaseConfigured()) {
+        showNotification('Não foi possível salvar a etapa no banco. Execute a migration do roteiro no Supabase.');
+      }
+    }).catch(() => {
+      if (isSupabaseConfigured()) {
+        showNotification('Erro ao salvar a etapa do roteiro no banco.');
+      }
+    });
   };
 
   // Handler: Update Process Step
@@ -257,7 +265,15 @@ export default function MaCarvalhoApp() {
       }
       return updated;
     });
-    dbService.saveProcessStep(stepForProduct).catch(() => {});
+    dbService.saveProcessStep(stepForProduct).then((saved) => {
+      if (!saved && isSupabaseConfigured()) {
+        showNotification('Não foi possível atualizar a etapa no banco. Execute a migration do roteiro no Supabase.');
+      }
+    }).catch(() => {
+      if (isSupabaseConfigured()) {
+        showNotification('Erro ao atualizar a etapa do roteiro no banco.');
+      }
+    });
   };
 
   // Handler: Remove Process Step

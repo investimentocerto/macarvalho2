@@ -315,7 +315,12 @@ export const dbService = {
       labor_quantity: step.laborQuantity,
     });
 
-    return !error;
+    if (error) {
+      console.error('Erro ao salvar etapa do roteiro no Supabase:', error.message, error.details || '');
+      return false;
+    }
+
+    return true;
   },
 
   // STOCK MOVEMENTS
