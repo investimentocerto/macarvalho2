@@ -140,9 +140,10 @@ export function calculateDurationHours(startedAt?: string, endedAt?: string): nu
 }
 
 export function calculateEquipmentDepreciation(equipment: Pick<Equipment, 'acquisitionCost' | 'residualValue' | 'estimatedUsefulLife' | 'productiveHoursAvailable'>, hours: number): number {
-  if (equipment.estimatedUsefulLife <= 0 || equipment.productiveHoursAvailable <= 0 || hours <= 0) return 0;
+  const productiveHours = equipment.productiveHoursAvailable ?? 0;
+  if (equipment.estimatedUsefulLife <= 0 || productiveHours <= 0 || hours <= 0) return 0;
   const monthly = Math.max(0, equipment.acquisitionCost - equipment.residualValue) / equipment.estimatedUsefulLife / 12;
-  return monthly / equipment.productiveHoursAvailable * hours;
+  return monthly / productiveHours * hours;
 }
 
 export function calculateEnergyCost(equipment: Pick<Equipment, 'powerKw' | 'energyTariff'>, hours: number): number {

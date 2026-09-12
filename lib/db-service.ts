@@ -797,6 +797,9 @@ export const dbService = {
       total_cost: quantity * unitCost,
       timestamp: new Date().toISOString(),
     });
+    if (error) {
+      await this.saveProduct(product);
+    }
     return { success: !error, created: !error };
   },
 };
