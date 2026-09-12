@@ -52,6 +52,7 @@ export type BOMComponent = BOMComponentItem;
 
 export interface ProcessStepItem {
   id: string;
+  productId?: string;
   stepNumber: number; // e.g. 10, 20, 30, 40
   title: string;
   cost: number;

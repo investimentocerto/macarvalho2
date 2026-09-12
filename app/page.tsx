@@ -222,8 +222,12 @@ export default function MaCarvalhoApp() {
 
   // Handler: Add Process Step
   const handleAddProcessStep = (step: ProcessStepItem) => {
+    const stepForProduct: ProcessStepItem = {
+      ...step,
+      productId: selectedProduct?.id,
+    };
     setProcessSteps((prev) => {
-      const updated = [...prev, step];
+      const updated = [...prev, stepForProduct];
       if (selectedProduct) {
         const newOpCost = updated.reduce((acc, s) => acc + (s.cost || 0), 0);
         const updatedProd = { ...selectedProduct, laborCost: newOpCost };
@@ -233,13 +237,17 @@ export default function MaCarvalhoApp() {
       }
       return updated;
     });
-    dbService.saveProcessStep(step).catch(() => {});
+    dbService.saveProcessStep(stepForProduct).catch(() => {});
   };
 
   // Handler: Update Process Step
   const handleUpdateProcessStep = (step: ProcessStepItem) => {
+    const stepForProduct: ProcessStepItem = {
+      ...step,
+      productId: step.productId || selectedProduct?.id,
+    };
     setProcessSteps((prev) => {
-      const updated = prev.map((s) => (s.id === step.id ? step : s));
+      const updated = prev.map((s) => (s.id === stepForProduct.id ? stepForProduct : s));
       if (selectedProduct) {
         const newOpCost = updated.reduce((acc, s) => acc + (s.cost || 0), 0);
         const updatedProd = { ...selectedProduct, laborCost: newOpCost };
@@ -249,7 +257,7 @@ export default function MaCarvalhoApp() {
       }
       return updated;
     });
-    dbService.saveProcessStep(step).catch(() => {});
+    dbService.saveProcessStep(stepForProduct).catch(() => {});
   };
 
   // Handler: Remove Process Step

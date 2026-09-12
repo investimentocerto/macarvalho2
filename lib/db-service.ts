@@ -274,6 +274,7 @@ export const dbService = {
 
     return (data || []).map((row: any) => ({
       id: row.id,
+      productId: row.product_id || undefined,
       stepNumber: row.step_number,
       title: row.title,
       cost: Number(row.cost || 0),
@@ -297,6 +298,7 @@ export const dbService = {
 
     const { error } = await supabase.from('process_steps').upsert({
       id: step.id,
+      product_id: step.productId,
       step_number: step.stepNumber,
       title: step.title,
       cost: step.cost,
