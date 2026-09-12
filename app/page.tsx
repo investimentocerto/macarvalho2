@@ -278,9 +278,9 @@ export default function MaCarvalhoApp() {
   };
 
   // Handler: Save BOM costs to current product
-  const handleSaveBOM = (materialCost: number, processCost: number) => {
+  const handleSaveBOM = (processCost: number) => {
     if (selectedProduct) {
-      const updatedProd = { ...selectedProduct, bomCost: materialCost, laborCost: processCost };
+      const updatedProd = { ...selectedProduct, laborCost: processCost };
       setSelectedProduct(updatedProd);
       setProducts((pList) => pList.map((p) => (p.id === updatedProd.id ? updatedProd : p)));
       dbService.saveProduct(updatedProd).catch(() => {});

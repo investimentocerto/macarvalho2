@@ -1,13 +1,12 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { BOMComponent, ProcessStepItem, Product, InventoryItem, ProductionProcess } from '@/lib/types';
 import { 
   Layers, 
   Plus, 
   Copy, 
   Save, 
-  DollarSign, 
   Clock, 
   CheckCircle2, 
   TrendingUp, 
@@ -39,7 +38,7 @@ interface BOMViewProps {
   onRemoveProcessStep?: (id: string) => void;
   onOpenImageModal: (product: Product) => void;
   onNotify: (msg: string) => void;
-  onSaveBOM?: (materialCost: number, processCost: number) => void;
+  onSaveBOM?: (processCost: number) => void;
   onUpdateProduct?: (product: Product) => void;
 }
 
@@ -104,10 +103,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
   const [newStepMachine, setNewStepMachine] = useState('Bancada Artesanal');
   const [newStepLine, setNewStepLine] = useState('Linha Geral');
 
-  // Calculations
-  const totalMaterialCost = components.reduce((acc, c) => acc + (c.totalCost || 0), 0);
-  const totalMaterialCostFormatted = `R$ ${totalMaterialCost.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
   const totalProcessCost = processSteps.reduce((acc, s) => acc + (s.cost || 0), 0);
 
   const handleDuplicate = () => {
@@ -116,7 +111,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
 
   const handleSave = () => {
     if (onSaveBOM) {
-      onSaveBOM(totalMaterialCost, totalProcessCost);
+      onSaveBOM(totalProcessCost);
     }
     onNotify('Estrutura técnica (BOM) e roteiro salvos com sucesso!');
   };
@@ -395,76 +390,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
         </div>
       </section>
 
-      {/* Key Metrics / Summary Bento Grid */}
-      <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Custo Total de Insumos */}
-        <div className="bg-white p-4 rounded-xl shadow-xs border border-[#dec1af]/40 flex flex-col justify-between hover:shadow-md transition-shadow">
-          <div className="flex justify-between items-start mb-3">
-            <span className="text-xs font-semibold text-[#574335]">Custo Total de Insumos</span>
-            <div className="w-8 h-8 rounded-full bg-[#9df897] flex items-center justify-center text-[#187425]">
-              <DollarSign className="w-4 h-4" />
-            </div>
-          </div>
-          <div>
-            <div className="text-2xl font-bold text-[#1a1c1b] tracking-tight">
-              {totalMaterialCostFormatted}
-            </div>
-            <div className="text-xs text-[#574335] mt-1">
-              Baseado na lista de insumos
-            </div>
-          </div>
-        </div>
-
-        {/* Custo de Roteiro */}
-        <div className="bg-white p-4 rounded-xl shadow-xs border border-[#dec1af]/40 flex flex-col justify-between hover:shadow-md transition-shadow">
-          <div className="flex justify-between items-start mb-3">
-            <span className="text-xs font-semibold text-[#574335]">Custo de Produção</span>
-            <div className="w-8 h-8 rounded-full bg-stone-200 flex items-center justify-center text-stone-700">
-              <Clock className="w-4 h-4" />
-            </div>
-          </div>
-          <div>
-            <div className="text-2xl font-bold text-[#1a1c1b] tracking-tight">
-              R$ {totalProcessCost.toFixed(2).replace('.', ',')}
-            </div>
-            <div className="text-xs text-[#574335] mt-1">{processSteps.length} etapas cadastradas</div>
-          </div>
-        </div>
-
-        {/* Capacidade do Lote */}
-        <div className="bg-white p-4 rounded-xl shadow-xs border border-[#dec1af]/40 flex flex-col justify-between hover:shadow-md transition-shadow">
-          <div className="flex justify-between items-start mb-3">
-            <span className="text-xs font-semibold text-[#574335]">Lote Padrão</span>
-            <div className="w-8 h-8 rounded-full bg-[#ffdcc6] flex items-center justify-center text-[#954a00]">
-              <Factory className="w-4 h-4" />
-            </div>
-          </div>
-          <div>
-            <div className="text-2xl font-bold text-[#1a1c1b] tracking-tight">50 un</div>
-            <div className="text-xs font-bold text-[#0d6e1f] mt-1 flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Rendimento artesanal</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Margem Bruta */}
-        <div className="bg-[#954a00] p-4 rounded-xl shadow-md text-white flex flex-col justify-between relative overflow-hidden">
-          <div className="flex justify-between items-start mb-3">
-            <span className="text-xs font-medium text-white/80">Margem Estimada</span>
-            <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white">
-              <span className="font-bold text-sm">%</span>
-            </div>
-          </div>
-          <div>
-            <div className="text-2xl font-bold text-white tracking-tight">45.0%</div>
-            <div className="w-full bg-white/20 h-1.5 rounded-full mt-2.5 overflow-hidden">
-              <div className="bg-white h-full rounded-full w-[75%]"></div>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* BOM Details Area */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
         {/* Components Table (Left 7 cols) */}
@@ -472,7 +397,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
           <div className="p-4 flex justify-between items-center bg-[#f4f3f1] border-b border-[#dec1af]/30">
             <h2 className="font-bold text-sm text-[#1a1c1b] flex items-center gap-2">
               <Layers className="w-5 h-5 text-[#954a00]" />
-              Insumos & Matérias-Primas da Fórmula
+              Matérias-Primas & Insumos
             </h2>
             <button
               id="btn-add-bom-component"
@@ -501,8 +426,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
                     <th className="py-2.5 px-4">Matéria-Prima / Embalagem</th>
                     <th className="py-2.5 px-4 text-right w-16">Qtd</th>
                     <th className="py-2.5 px-4 text-center w-14">Unid</th>
-                    <th className="py-2.5 px-4 text-right w-24">Custo Un.</th>
-                    <th className="py-2.5 px-4 text-right w-24">Total</th>
                     <th className="py-2.5 px-4 w-10"></th>
                   </tr>
                 </thead>
@@ -548,12 +471,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
                         </td>
                         <td className="py-2 px-4 text-right font-medium">{comp.quantity.toFixed(2)}</td>
                         <td className="py-2 px-4 text-center text-[#574335]">{comp.unit}</td>
-                        <td className="py-2 px-4 text-right text-[#574335]">
-                          R$ {comp.unitCost.toFixed(2).replace('.', ',')}
-                        </td>
-                        <td className="py-2 px-4 text-right font-bold text-[#1a1c1b]">
-                          R$ {comp.totalCost.toFixed(2).replace('.', ',')}
-                        </td>
                         <td className="py-2 px-4 text-center" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center justify-center gap-1">
                             <button
@@ -582,17 +499,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
                     );
                   })}
                 </tbody>
-                <tfoot className="bg-[#f4f3f1] border-t border-[#dec1af]/40">
-                  <tr>
-                    <td colSpan={5} className="py-3 px-4 text-right font-bold text-[#574335]">
-                      Subtotal Insumos:
-                    </td>
-                    <td className="py-3 px-4 text-right font-bold text-sm text-[#1a1c1b]">
-                      {totalMaterialCostFormatted}
-                    </td>
-                    <td></td>
-                  </tr>
-                </tfoot>
               </table>
             )}
           </div>
