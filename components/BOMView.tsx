@@ -102,6 +102,8 @@ export const BOMView: React.FC<BOMViewProps> = ({
   const [newStepTitle, setNewStepTitle] = useState('');
   const [newStepMachine, setNewStepMachine] = useState('Bancada Artesanal');
   const [newStepLine, setNewStepLine] = useState('Linha Geral');
+  const [newStepUnitsPerHour, setNewStepUnitsPerHour] = useState('0');
+  const [editStepUnitsPerHour, setEditStepUnitsPerHour] = useState('0');
 
   const totalProcessCost = processSteps.reduce((acc, s) => acc + (s.cost || 0), 0);
 
@@ -245,6 +247,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
     setNewStepTitle('');
     setNewStepMachine('Bancada Artesanal');
     setNewStepLine('Linha Cosméticos');
+    setNewStepUnitsPerHour('0');
     setIsAddStepModalOpen(true);
   };
 
@@ -267,13 +270,14 @@ export const BOMView: React.FC<BOMViewProps> = ({
       costCenterCode: newStepMachine,
       hourlyRate: 0,
       laborQuantity: 0,
-      unitsPerHour: 0,
+      unitsPerHour: Number(newStepUnitsPerHour) || 0,
     };
 
     onAddProcessStep(step);
     setIsAddStepModalOpen(false);
     setSelectedProcessId('');
     setNewStepTitle('');
+    setNewStepUnitsPerHour('0');
     onNotify(`Etapa "${newStepTitle}" incluída no roteiro!`);
   };
 
@@ -283,6 +287,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
     setEditStepMachine(step.machine || '');
     setEditStepLine(step.line || 'Linha Cosméticos');
     setEditStepSelectedProcessId(step.processId || '');
+    setEditStepUnitsPerHour((step.unitsPerHour || 0).toString());
     setIsEditStepModalOpen(true);
   };
 
@@ -297,6 +302,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
       line: editStepLine,
       processId: editStepSelectedProcessId || undefined,
       costCenterCode: editStepMachine,
+      unitsPerHour: Number(editStepUnitsPerHour) || 0,
     };
 
     if (onUpdateProcessStep) {
@@ -673,7 +679,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
                         <option value="">-- Escolher do Controle de Estoque --</option>
                         {inventoryItems.map((inv) => (
                           <option key={inv.id} value={inv.id}>
-                            [{inv.code}] {inv.name} • {inv.unit} • R$ {inv.unitCost !== undefined ? Number(inv.unitCost).toFixed(2).replace('.', ',') : '0,00'} (Saldo: {inv.balance} {inv.unit})
+                            [{inv.code}] {inv.name} • {inv.unit} (Saldo: {inv.balance} {inv.unit})
                           </option>
                         ))}
                       </select>
@@ -772,30 +778,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
                     className="w-full p-2.5 border border-[#dec1af] rounded-lg"
                   />
                 </div>
-                <div>
-                  <label className="block font-bold text-[#574335] mb-1">Custo Unitário (R$)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={newCompCost}
-                    onChange={(e) => setNewCompCost(e.target.value)}
-                    className="w-full p-2.5 border border-[#dec1af] rounded-lg"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-bold text-[#574335] mb-1 flex items-center gap-1.5">
-                  <ImageIcon className="w-3.5 h-3.5 text-[#f47d00]" />
-                  Link Direto da Imagem (HTML)
-                </label>
-                <input
-                  type="url"
-                  placeholder="https://exemplo.com/insumo.png"
-                  value={newCompImageUrl}
-                  onChange={(e) => setNewCompImageUrl(e.target.value)}
-                  className="w-full p-2.5 border border-[#dec1af] rounded-lg font-mono text-[11px]"
-                />
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-[#dec1af]/30">
@@ -1043,6 +1025,18 @@ export const BOMView: React.FC<BOMViewProps> = ({
                 </div>
               </div>
 
+              <div>
+                <label className="block font-bold text-[#574335] mb-1">Quantidade de Produção p/hora</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={newStepUnitsPerHour}
+                  onChange={(e) => setNewStepUnitsPerHour(e.target.value)}
+                  className="w-full p-2.5 border border-[#dec1af] rounded-xl"
+                />
+              </div>
+
               <div className="flex justify-end gap-2 pt-3 border-t border-[#dec1af]/30">
                 <button
                   type="button"
@@ -1134,6 +1128,18 @@ export const BOMView: React.FC<BOMViewProps> = ({
                     className="w-full p-2.5 border border-[#dec1af] rounded-xl"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-[#574335] mb-1">Quantidade de Produção p/hora</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={editStepUnitsPerHour}
+                  onChange={(e) => setEditStepUnitsPerHour(e.target.value)}
+                  className="w-full p-2.5 border border-[#dec1af] rounded-xl"
+                />
               </div>
 
               <div className="flex items-center justify-between gap-2 pt-3 border-t border-[#dec1af]/30">
