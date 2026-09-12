@@ -1,14 +1,13 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { Product, BOMComponent, ProcessStepItem } from '@/lib/types';
+import { Product } from '@/lib/types';
 import { 
   Plus, 
   Download, 
   Search, 
   History, 
   GitFork, 
-  Calculator, 
   Package, 
   Image as ImageIcon, 
   ExternalLink, 
@@ -20,8 +19,6 @@ import {
 interface ProductsViewProps {
   products: Product[];
   selectedProduct?: Product | null;
-  bomComponents?: BOMComponent[];
-  processSteps?: ProcessStepItem[];
   onSelectProduct: (product: Product) => void;
   onNavigateToBOM: (product?: Product) => void;
   onOpenImageModal: (product: Product) => void;
@@ -32,8 +29,6 @@ interface ProductsViewProps {
 export const ProductsView: React.FC<ProductsViewProps> = ({
   products,
   selectedProduct,
-  bomComponents = [],
-  processSteps = [],
   onSelectProduct,
   onNavigateToBOM,
   onOpenImageModal,
@@ -174,32 +169,6 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
     setNewDescription('');
     setNewImageUrl('');
   };
-
-  // Calculations for selected product price engine directly tied to BOM & Process Steps
-  const bomCost = useMemo(() => {
-    if (bomComponents && bomComponents.length > 0) {
-      return bomComponents.reduce(
-        (acc, c) => acc + (c.totalCost != null ? Number(c.totalCost) : ((Number(c.quantity) || 0) * (Number(c.unitCost) || 0))),
-        0
-      );
-    }
-    return selectedProduct?.bomCost || 0;
-  }, [bomComponents, selectedProduct]);
-
-  const operationalCost = useMemo(() => {
-    if (processSteps && processSteps.length > 0) {
-      return processSteps.reduce((acc, s) => acc + (Number(s.cost) || 0), 0);
-    }
-    return selectedProduct?.laborCost || 0;
-  }, [processSteps, selectedProduct]);
-
-  const totalCost = selectedProduct 
-    ? bomCost + operationalCost
-    : 0;
-
-  const marginPercentage = selectedProduct && selectedProduct.price > 0 
-    ? (((selectedProduct.price - totalCost) / selectedProduct.price) * 100).toFixed(1)
-    : '0.0';
 
   return (
     <div className="flex flex-col gap-6 animate-fadeIn pb-12">
@@ -508,65 +477,6 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                   </div>
                 </div>
 
-                {/* Auto Price & Margin Engine */}
-                <div className="bg-[#f4f3f1] rounded-xl p-4 border border-[#dec1af]/50 relative overflow-hidden">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Calculator className="w-4 h-4 text-[#954a00]" />
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-[#1a1c1b]">
-                      Composição de Custo & Margem
-                    </h3>
-                  </div>
-
-                  <div className="space-y-2 text-xs">
-                    <div className="flex justify-between items-center pb-2 border-b border-[#dec1af]/40">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[#574335]">Custo de Insumos (BOM)</span>
-                        {bomComponents && bomComponents.length > 0 && (
-                          <span className="text-[10px] text-[#954a00] font-semibold bg-[#ffdcc6] px-1.5 py-0.5 rounded">
-                            {bomComponents.length} insumos
-                          </span>
-                        )}
-                      </div>
-                      <span className="font-semibold text-[#1a1c1b]">
-                        R$ {bomCost.toFixed(2).replace('.', ',')}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center pb-2 border-b border-[#dec1af]/40">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[#574335]">Custos Operacionais</span>
-                        {processSteps && processSteps.length > 0 && (
-                          <span className="text-[10px] text-stone-600 font-semibold bg-stone-200 px-1.5 py-0.5 rounded">
-                            {processSteps.length} etapas
-                          </span>
-                        )}
-                      </div>
-                      <span className="font-semibold text-[#1a1c1b]">
-                        R$ {operationalCost.toFixed(2).replace('.', ',')}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center pt-1 font-bold text-sm">
-                      <span className="text-[#1a1c1b]">Custo Total Unitário</span>
-                      <span className="text-[#954a00]">
-                        R$ {totalCost.toFixed(2).replace('.', ',')}
-                      </span>
-                    </div>
-
-                    <div className="mt-3 pt-3 border-t border-[#dec1af]/60 flex justify-between items-end">
-                      <div>
-                        <span className="block text-xs text-[#574335] mb-0.5">Preço Sugerido</span>
-                        <span className="text-2xl font-bold text-[#954a00] tracking-tight">
-                          R$ {selectedProduct.price.toFixed(2).replace('.', ',')}
-                        </span>
-                      </div>
-                      <div className="text-right">
-                        <span className="block text-xs text-[#574335] mb-1">Margem Bruta</span>
-                        <div className="bg-[#9df897] text-[#002204] px-2.5 py-1 rounded-lg text-xs font-bold inline-block border border-emerald-300">
-                          {marginPercentage}%
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
               </div>
 
               {/* Action Footer */}

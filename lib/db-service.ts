@@ -7,7 +7,8 @@ import {
   StockMovement, 
   ProductionOrder, 
   SaleRecord,
-  ProductionProcess 
+  ProductionProcess,
+  Equipment
 } from './types';
 
 export const dbService = {
@@ -282,6 +283,7 @@ export const dbService = {
       durationFormatted: row.duration_formatted,
       hourlyRateText: row.hourly_rate_text,
       processId: row.process_id || undefined,
+      equipmentId: row.equipment_id || undefined,
       costCenterCode: row.cost_center_code || undefined,
       hourlyRate: row.hourly_rate !== null && row.hourly_rate !== undefined ? Number(row.hourly_rate) : undefined,
       unitsPerHour: row.units_per_hour !== null && row.units_per_hour !== undefined ? Number(row.units_per_hour) : undefined,
@@ -304,6 +306,7 @@ export const dbService = {
       duration_formatted: step.durationFormatted,
       hourly_rate_text: step.hourlyRateText,
       process_id: step.processId,
+      equipment_id: step.equipmentId,
       cost_center_code: step.costCenterCode,
       hourly_rate: step.hourlyRate,
       units_per_hour: step.unitsPerHour,
@@ -461,6 +464,78 @@ export const dbService = {
     if (!supabase || !isSupabaseConfigured()) return true;
 
     const { error } = await supabase.from('production_processes').delete().eq('id', id);
+    return !error;
+  },
+
+  // EQUIPAMENTOS VINCULADOS A CENTROS DE CUSTO
+  async fetchEquipment(): Promise<Equipment[] | null> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) {
+      if (typeof window !== 'undefined') {
+        const stored = localStorage.getItem('macarvalho_equipment');
+        if (stored) {
+          try { return JSON.parse(stored); } catch { return null; }
+        }
+      }
+      return null;
+    }
+
+    const { data, error } = await supabase.from('equipment').select('*').order('code');
+    if (error) {
+      console.warn('Erro ao carregar equipamentos do Supabase:', error.message);
+      return null;
+    }
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      code: row.code,
+      name: row.name,
+      processId: row.process_id,
+      acquisitionCost: Number(row.acquisition_cost || 0),
+      residualValue: Number(row.residual_value || 0),
+      estimatedUsefulLife: Number(row.estimated_useful_life || 0),
+      createdAt: row.created_at,
+    }));
+  },
+
+  async saveEquipment(equipment: Equipment): Promise<boolean> {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('macarvalho_equipment');
+        const list: Equipment[] = stored ? JSON.parse(stored) : [];
+        const index = list.findIndex((item) => item.id === equipment.id);
+        if (index >= 0) list[index] = equipment; else list.push(equipment);
+        localStorage.setItem('macarvalho_equipment', JSON.stringify(list));
+      } catch (e) { console.warn('Erro ao salvar equipamento no localStorage:', e); }
+    }
+
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return true;
+    const { error } = await supabase.from('equipment').upsert({
+      id: equipment.id,
+      code: equipment.code,
+      name: equipment.name,
+      process_id: equipment.processId,
+      acquisition_cost: equipment.acquisitionCost,
+      residual_value: equipment.residualValue,
+      estimated_useful_life: equipment.estimatedUsefulLife,
+      created_at: equipment.createdAt || new Date().toISOString(),
+    });
+    return !error;
+  },
+
+  async deleteEquipment(id: string): Promise<boolean> {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('macarvalho_equipment');
+        if (stored) {
+          const list: Equipment[] = JSON.parse(stored);
+          localStorage.setItem('macarvalho_equipment', JSON.stringify(list.filter((item) => item.id !== id)));
+        }
+      } catch (e) { console.warn('Erro ao remover equipamento do localStorage:', e); }
+    }
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return true;
+    const { error } = await supabase.from('equipment').delete().eq('id', id);
     return !error;
   }
 };

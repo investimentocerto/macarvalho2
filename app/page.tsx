@@ -10,13 +10,15 @@ import {
   StockMovement, 
   ProductionOrder, 
   SaleRecord,
-  ProductionProcess
+  ProductionProcess,
+  Equipment
 } from '@/lib/types';
 import { 
   INITIAL_PRODUCTS, 
   INITIAL_BOM_COMPONENTS, 
   INITIAL_PROCESS_STEPS, 
   INITIAL_PRODUCTION_PROCESSES,
+  INITIAL_EQUIPMENT,
   INITIAL_INVENTORY, 
   INITIAL_MOVEMENTS, 
   INITIAL_PRODUCTION_ORDERS, 
@@ -48,6 +50,7 @@ export default function MaCarvalhoApp() {
   const [bomComponents, setBomComponents] = useState<BOMComponent[]>(INITIAL_BOM_COMPONENTS);
   const [processSteps, setProcessSteps] = useState<ProcessStepItem[]>(INITIAL_PROCESS_STEPS);
   const [productionProcesses, setProductionProcesses] = useState<ProductionProcess[]>(INITIAL_PRODUCTION_PROCESSES);
+  const [equipment, setEquipment] = useState<Equipment[]>(INITIAL_EQUIPMENT);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>(INITIAL_INVENTORY);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>(INITIAL_MOVEMENTS);
   const [productionOrders, setProductionOrders] = useState<ProductionOrder[]>(INITIAL_PRODUCTION_ORDERS);
@@ -78,12 +81,15 @@ export default function MaCarvalhoApp() {
         setProductionProcesses(localProcs);
       }
     });
+    dbService.fetchEquipment().then((items) => {
+      if (items && items.length > 0) setEquipment(items);
+    });
 
     if (!isSupabaseConfigured()) return;
 
     const loadRemoteData = async () => {
       try {
-        const [remoteProds, remoteInv, remoteOps, remoteSales, remoteBom, remoteSteps, remoteMovements, remoteProcs] = await Promise.all([
+        const [remoteProds, remoteInv, remoteOps, remoteSales, remoteBom, remoteSteps, remoteMovements, remoteProcs, remoteEquipment] = await Promise.all([
           dbService.fetchProducts(),
           dbService.fetchInventory(),
           dbService.fetchProductionOrders(),
@@ -92,6 +98,7 @@ export default function MaCarvalhoApp() {
           dbService.fetchProcessSteps(),
           dbService.fetchStockMovements(),
           dbService.fetchProductionProcesses(),
+          dbService.fetchEquipment(),
         ]);
 
         if (remoteProds && remoteProds.length > 0) {
@@ -105,6 +112,7 @@ export default function MaCarvalhoApp() {
         if (remoteSteps && remoteSteps.length > 0) setProcessSteps(remoteSteps);
         if (remoteMovements && remoteMovements.length > 0) setStockMovements(remoteMovements);
         if (remoteProcs && remoteProcs.length > 0) setProductionProcesses(remoteProcs);
+        if (remoteEquipment && remoteEquipment.length > 0) setEquipment(remoteEquipment);
 
         showNotification('Sincronizado com Supabase PostgreSQL!');
       } catch (err) {
@@ -277,6 +285,21 @@ export default function MaCarvalhoApp() {
     dbService.deleteProductionProcess(id).catch(() => {});
   };
 
+  const handleAddEquipment = (item: Equipment) => {
+    setEquipment((prev) => [item, ...prev]);
+    dbService.saveEquipment(item).catch(() => {});
+  };
+
+  const handleUpdateEquipment = (item: Equipment) => {
+    setEquipment((prev) => prev.map((current) => (current.id === item.id ? item : current)));
+    dbService.saveEquipment(item).catch(() => {});
+  };
+
+  const handleDeleteEquipment = (id: string) => {
+    setEquipment((prev) => prev.filter((item) => item.id !== id));
+    dbService.deleteEquipment(id).catch(() => {});
+  };
+
   // Handler: Save BOM costs to current product
   const handleSaveBOM = (processCost: number) => {
     if (selectedProduct) {
@@ -376,8 +399,6 @@ export default function MaCarvalhoApp() {
             <ProductsView
               products={products}
               selectedProduct={selectedProduct || undefined}
-              bomComponents={bomComponents}
-              processSteps={processSteps}
               onSelectProduct={setSelectedProduct}
               onNavigateToBOM={handleNavigateToBOM}
               onOpenImageModal={(p) => handleOpenImageModal(p)}
@@ -393,6 +414,7 @@ export default function MaCarvalhoApp() {
               processSteps={processSteps}
               inventoryItems={inventoryItems}
               productionProcesses={productionProcesses}
+              equipment={equipment}
               onAddComponent={handleAddBOMComponent}
               onUpdateComponent={handleUpdateBOMComponent}
               onRemoveComponent={handleRemoveBOMComponent}
@@ -412,6 +434,10 @@ export default function MaCarvalhoApp() {
               onAddProcess={handleAddProcess}
               onUpdateProcess={handleUpdateProcess}
               onDeleteProcess={handleDeleteProcess}
+              equipment={equipment}
+              onAddEquipment={handleAddEquipment}
+              onUpdateEquipment={handleUpdateEquipment}
+              onDeleteEquipment={handleDeleteEquipment}
               onNotify={showNotification}
             />
           )}

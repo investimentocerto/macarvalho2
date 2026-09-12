@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { BOMComponent, ProcessStepItem, Product, InventoryItem, ProductionProcess } from '@/lib/types';
+import { BOMComponent, Equipment, ProcessStepItem, Product, InventoryItem, ProductionProcess } from '@/lib/types';
 import { 
   Layers, 
   Plus, 
@@ -30,6 +30,7 @@ interface BOMViewProps {
   processSteps: ProcessStepItem[];
   inventoryItems?: InventoryItem[];
   productionProcesses?: ProductionProcess[];
+  equipment?: Equipment[];
   onAddComponent: (comp: BOMComponent) => void;
   onUpdateComponent?: (comp: BOMComponent) => void;
   onRemoveComponent: (id: string) => void;
@@ -48,6 +49,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
   processSteps,
   inventoryItems = [],
   productionProcesses = [],
+  equipment = [],
   onAddComponent,
   onUpdateComponent,
   onRemoveComponent,
@@ -78,6 +80,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
   const [editingStep, setEditingStep] = useState<ProcessStepItem | null>(null);
   const [editStepTitle, setEditStepTitle] = useState('');
   const [editStepMachine, setEditStepMachine] = useState('');
+  const [editStepEquipmentId, setEditStepEquipmentId] = useState('');
   const [editStepLine, setEditStepLine] = useState('');
   const [editStepSelectedProcessId, setEditStepSelectedProcessId] = useState('');
 
@@ -102,6 +105,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
   const [newStepTitle, setNewStepTitle] = useState('');
   const [newStepMachine, setNewStepMachine] = useState('Bancada Artesanal');
   const [newStepLine, setNewStepLine] = useState('Linha Geral');
+  const [newStepEquipmentId, setNewStepEquipmentId] = useState('');
   const [newStepUnitsPerHour, setNewStepUnitsPerHour] = useState('0');
   const [editStepUnitsPerHour, setEditStepUnitsPerHour] = useState('0');
 
@@ -247,6 +251,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
     setNewStepTitle('');
     setNewStepMachine('Bancada Artesanal');
     setNewStepLine('Linha Cosméticos');
+    setNewStepEquipmentId('');
     setNewStepUnitsPerHour('0');
     setIsAddStepModalOpen(true);
   };
@@ -261,12 +266,13 @@ export const BOMView: React.FC<BOMViewProps> = ({
       stepNumber: nextStepNum,
       title: newStepTitle,
       cost: 0,
-      machine: newStepMachine,
-      line: newStepLine,
+      machine: equipment.find((item) => item.id === newStepEquipmentId)?.name || '',
+      line: equipment.find((item) => item.id === newStepEquipmentId)?.name || '',
       durationMinutes: 0,
       durationFormatted: '',
       hourlyRateText: '',
       processId: selectedProcessId || undefined,
+      equipmentId: newStepEquipmentId || undefined,
       costCenterCode: newStepMachine,
       hourlyRate: 0,
       laborQuantity: 0,
@@ -277,6 +283,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
     setIsAddStepModalOpen(false);
     setSelectedProcessId('');
     setNewStepTitle('');
+    setNewStepEquipmentId('');
     setNewStepUnitsPerHour('0');
     onNotify(`Etapa "${newStepTitle}" incluída no roteiro!`);
   };
@@ -285,6 +292,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
     setEditingStep(step);
     setEditStepTitle(step.title);
     setEditStepMachine(step.machine || '');
+    setEditStepEquipmentId(step.equipmentId || '');
     setEditStepLine(step.line || 'Linha Cosméticos');
     setEditStepSelectedProcessId(step.processId || '');
     setEditStepUnitsPerHour((step.unitsPerHour || 0).toString());
@@ -298,9 +306,10 @@ export const BOMView: React.FC<BOMViewProps> = ({
     const updated: ProcessStepItem = {
       ...editingStep,
       title: editStepTitle,
-      machine: editStepMachine,
-      line: editStepLine,
+      machine: equipment.find((item) => item.id === editStepEquipmentId)?.name || editStepMachine,
+      line: equipment.find((item) => item.id === editStepEquipmentId)?.name || editStepLine,
       processId: editStepSelectedProcessId || undefined,
+      equipmentId: editStepEquipmentId || undefined,
       costCenterCode: editStepMachine,
       unitsPerHour: Number(editStepUnitsPerHour) || 0,
     };
@@ -963,13 +972,14 @@ export const BOMView: React.FC<BOMViewProps> = ({
               {/* Seleção do processo de fabricação */}
               <div>
                 <label className="block font-bold text-[#574335] mb-1 flex items-center justify-between">
-                  <span>Processo de Fabricação</span>
+                  <span>Cód. Centro de Custo *</span>
                 </label>
                 <select
                   value={selectedProcessId}
                   onChange={(e) => {
                     const pId = e.target.value;
                     setSelectedProcessId(pId);
+                    setNewStepEquipmentId('');
                     const proc = productionProcesses.find((p) => p.id === pId);
                     if (proc) {
                       setNewStepTitle(proc.description);
@@ -978,7 +988,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
                   }}
                   className="w-full p-2.5 border border-[#dec1af] rounded-xl bg-white font-medium focus:ring-2 focus:ring-[#954a00]/20 focus:border-[#954a00]"
                 >
-                  <option value="">-- Selecione do Cadastro de Processos ou digite manualmente --</option>
+                  <option value="">-- Selecione o centro de custo --</option>
                   {productionProcesses.map((proc) => (
                     <option key={proc.id} value={proc.id}>
                       [{proc.code}] {proc.description}
@@ -1004,25 +1014,13 @@ export const BOMView: React.FC<BOMViewProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-[#574335] mb-1">Cód. Centro Custo / Máquina</label>
-                  <input
-                    type="text"
-                    value={newStepMachine}
-                    onChange={(e) => setNewStepMachine(e.target.value)}
-                    className="w-full p-2.5 border border-[#dec1af] rounded-xl font-mono text-[#954a00] font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold text-[#574335] mb-1">Linha / Setor</label>
-                  <input
-                    type="text"
-                    value={newStepLine}
-                    onChange={(e) => setNewStepLine(e.target.value)}
-                    className="w-full p-2.5 border border-[#dec1af] rounded-xl"
-                  />
-                </div>
+              <div>
+                <label className="block font-bold text-[#574335] mb-1">Máquina *</label>
+                <select required value={newStepEquipmentId} onChange={(e) => setNewStepEquipmentId(e.target.value)} className="w-full p-2.5 border border-[#dec1af] rounded-xl bg-white">
+                  <option value="">-- Selecione um equipamento --</option>
+                  {equipment.filter((item) => item.processId === selectedProcessId).map((item) => <option key={item.id} value={item.id}>[{item.code}] {item.name}</option>)}
+                </select>
+                {selectedProcessId && equipment.filter((item) => item.processId === selectedProcessId).length === 0 && <p className="text-[10px] text-amber-800 mt-1">Nenhum equipamento cadastrado para este centro de custo.</p>}
               </div>
 
               <div>
@@ -1074,13 +1072,14 @@ export const BOMView: React.FC<BOMViewProps> = ({
               {/* Seleção do processo de fabricação */}
               <div>
                 <label className="block font-bold text-[#574335] mb-1 flex items-center justify-between">
-                  <span>Processo de Fabricação</span>
+                  <span>Cód. Centro de Custo *</span>
                 </label>
                 <select
                   value={editStepSelectedProcessId}
                   onChange={(e) => {
                     const pId = e.target.value;
                     setEditStepSelectedProcessId(pId);
+                    setEditStepEquipmentId('');
                     const proc = productionProcesses.find((p) => p.id === pId);
                     if (proc) {
                       setEditStepTitle(proc.description);
@@ -1089,7 +1088,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
                   }}
                   className="w-full p-2.5 border border-[#dec1af] rounded-xl bg-white font-medium focus:ring-2 focus:ring-[#954a00]/20 focus:border-[#954a00]"
                 >
-                  <option value="">-- Manter dados atuais ou escolher do cadastro --</option>
+                  <option value="">-- Selecione o centro de custo --</option>
                   {productionProcesses.map((proc) => (
                     <option key={proc.id} value={proc.id}>
                       [{proc.code}] {proc.description}
@@ -1109,25 +1108,13 @@ export const BOMView: React.FC<BOMViewProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-[#574335] mb-1">Cód. Centro Custo / Máquina</label>
-                  <input
-                    type="text"
-                    value={editStepMachine}
-                    onChange={(e) => setEditStepMachine(e.target.value)}
-                    className="w-full p-2.5 border border-[#dec1af] rounded-xl font-mono text-[#954a00] font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold text-[#574335] mb-1">Linha / Setor</label>
-                  <input
-                    type="text"
-                    value={editStepLine}
-                    onChange={(e) => setEditStepLine(e.target.value)}
-                    className="w-full p-2.5 border border-[#dec1af] rounded-xl"
-                  />
-                </div>
+              <div>
+                <label className="block font-bold text-[#574335] mb-1">Máquina *</label>
+                <select required value={editStepEquipmentId} onChange={(e) => setEditStepEquipmentId(e.target.value)} className="w-full p-2.5 border border-[#dec1af] rounded-xl bg-white">
+                  <option value="">-- Selecione um equipamento --</option>
+                  {equipment.filter((item) => item.processId === editStepSelectedProcessId).map((item) => <option key={item.id} value={item.id}>[{item.code}] {item.name}</option>)}
+                </select>
+                {editStepSelectedProcessId && equipment.filter((item) => item.processId === editStepSelectedProcessId).length === 0 && <p className="text-[10px] text-amber-800 mt-1">Nenhum equipamento cadastrado para este centro de custo.</p>}
               </div>
 
               <div>

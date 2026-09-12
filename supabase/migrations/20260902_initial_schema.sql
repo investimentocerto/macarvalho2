@@ -152,3 +152,37 @@ BEGIN
     DROP POLICY IF EXISTS "Public read/write access for sales_records" ON public.sales_records;
     CREATE POLICY "Public read/write access for sales_records" ON public.sales_records FOR ALL USING (true) WITH CHECK (true);
 END $$;
+
+-- 10. Centros de custo e equipamentos produtivos
+CREATE TABLE IF NOT EXISTS public.production_processes (
+    id TEXT PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    hourly_rate NUMERIC NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.equipment (
+    id TEXT PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    process_id TEXT NOT NULL REFERENCES public.production_processes(id) ON DELETE RESTRICT,
+    acquisition_cost NUMERIC NOT NULL DEFAULT 0,
+    residual_value NUMERIC NOT NULL DEFAULT 0,
+    estimated_useful_life NUMERIC NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.process_steps ADD COLUMN IF NOT EXISTS equipment_id TEXT REFERENCES public.equipment(id) ON DELETE SET NULL;
+
+ALTER TABLE public.production_processes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.equipment ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+    DROP POLICY IF EXISTS "Public read/write access for production_processes" ON public.production_processes;
+    CREATE POLICY "Public read/write access for production_processes" ON public.production_processes FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public read/write access for equipment" ON public.equipment;
+    CREATE POLICY "Public read/write access for equipment" ON public.equipment FOR ALL USING (true) WITH CHECK (true);
+END $$;

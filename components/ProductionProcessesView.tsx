@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { ProductionProcess } from '@/lib/types';
+import { Equipment, ProductionProcess } from '@/lib/types';
 import { 
   Plus, 
   Search, 
@@ -10,6 +10,7 @@ import {
   Factory, 
   X, 
   Check
+  ,Wrench
 } from 'lucide-react';
 
 interface ProductionProcessesViewProps {
@@ -17,6 +18,10 @@ interface ProductionProcessesViewProps {
   onAddProcess: (process: ProductionProcess) => void;
   onUpdateProcess: (process: ProductionProcess) => void;
   onDeleteProcess: (id: string) => void;
+  equipment: Equipment[];
+  onAddEquipment: (equipment: Equipment) => void;
+  onUpdateEquipment: (equipment: Equipment) => void;
+  onDeleteEquipment: (id: string) => void;
   onNotify: (msg: string) => void;
 }
 
@@ -25,16 +30,29 @@ export const ProductionProcessesView: React.FC<ProductionProcessesViewProps> = (
   onAddProcess,
   onUpdateProcess,
   onDeleteProcess,
+  equipment,
+  onAddEquipment,
+  onUpdateEquipment,
+  onDeleteEquipment,
   onNotify,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProcess, setEditingProcess] = useState<ProductionProcess | null>(null);
   const [processToDelete, setProcessToDelete] = useState<ProductionProcess | null>(null);
+  const [isEquipmentModalOpen, setIsEquipmentModalOpen] = useState(false);
+  const [editingEquipment, setEditingEquipment] = useState<Equipment | null>(null);
+  const [equipmentToDelete, setEquipmentToDelete] = useState<Equipment | null>(null);
 
   // Form State
   const [code, setCode] = useState('');
   const [description, setDescription] = useState('');
+  const [equipmentCode, setEquipmentCode] = useState('');
+  const [equipmentName, setEquipmentName] = useState('');
+  const [equipmentProcessId, setEquipmentProcessId] = useState('');
+  const [acquisitionCost, setAcquisitionCost] = useState('0');
+  const [residualValue, setResidualValue] = useState('0');
+  const [estimatedUsefulLife, setEstimatedUsefulLife] = useState('0');
 
   // Open modal for new process
   const handleOpenNew = () => {
@@ -50,6 +68,28 @@ export const ProductionProcessesView: React.FC<ProductionProcessesViewProps> = (
     setCode(proc.code);
     setDescription(proc.description);
     setIsModalOpen(true);
+  };
+
+  const handleOpenNewEquipment = () => {
+    setEditingEquipment(null);
+    setEquipmentCode('');
+    setEquipmentName('');
+    setEquipmentProcessId(processes[0]?.id || '');
+    setAcquisitionCost('0');
+    setResidualValue('0');
+    setEstimatedUsefulLife('0');
+    setIsEquipmentModalOpen(true);
+  };
+
+  const handleOpenEditEquipment = (item: Equipment) => {
+    setEditingEquipment(item);
+    setEquipmentCode(item.code);
+    setEquipmentName(item.name);
+    setEquipmentProcessId(item.processId);
+    setAcquisitionCost(item.acquisitionCost.toString());
+    setResidualValue(item.residualValue.toString());
+    setEstimatedUsefulLife(item.estimatedUsefulLife.toString());
+    setIsEquipmentModalOpen(true);
   };
 
   // Submit form
@@ -81,6 +121,27 @@ export const ProductionProcessesView: React.FC<ProductionProcessesViewProps> = (
     }
 
     setIsModalOpen(false);
+  };
+
+  const handleEquipmentSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!equipmentCode.trim() || !equipmentName.trim() || !equipmentProcessId) {
+      onNotify('Preencha o código, nome e centro de custo do equipamento.');
+      return;
+    }
+    const item: Equipment = {
+      id: editingEquipment?.id || `equipment-${Date.now()}`,
+      code: equipmentCode.trim().toUpperCase(),
+      name: equipmentName.trim(),
+      processId: equipmentProcessId,
+      acquisitionCost: Number(acquisitionCost) || 0,
+      residualValue: Number(residualValue) || 0,
+      estimatedUsefulLife: Number(estimatedUsefulLife) || 0,
+      createdAt: editingEquipment?.createdAt || new Date().toISOString(),
+    };
+    if (editingEquipment) onUpdateEquipment(item); else onAddEquipment(item);
+    onNotify(`Equipamento "${item.name}" ${editingEquipment ? 'atualizado' : 'cadastrado'} com sucesso!`);
+    setIsEquipmentModalOpen(false);
   };
 
   // Filtered list
@@ -137,6 +198,34 @@ export const ProductionProcessesView: React.FC<ProductionProcessesViewProps> = (
           </div>
         </div>
 
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-xs border border-[#dec1af]/40 overflow-hidden">
+        <div className="p-4 bg-[#f4f3f1] border-b border-[#dec1af]/30 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="font-bold text-sm text-[#1a1c1b] flex items-center gap-2"><Wrench className="w-4 h-4 text-[#954a00]" /> Equipamentos</h2>
+            <p className="text-[11px] text-[#574335] mt-1">Cadastre máquinas e vincule cada uma a um centro de custo.</p>
+          </div>
+          <button onClick={handleOpenNewEquipment} className="flex items-center gap-1.5 px-3 py-2 bg-[#954a00] hover:bg-[#713700] text-white rounded-xl text-xs font-bold">
+            <Plus className="w-4 h-4" /> Novo Equipamento
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          {equipment.length === 0 ? (
+            <div className="p-8 text-center text-xs text-[#574335]">Nenhum equipamento cadastrado.</div>
+          ) : (
+            <table className="w-full text-left text-xs border-collapse min-w-[700px]">
+              <thead><tr className="bg-white text-[#574335] uppercase tracking-wider font-semibold border-b border-[#e9e8e6]"><th className="py-2.5 px-4">Código</th><th className="py-2.5 px-4">Equipamento</th><th className="py-2.5 px-4">Centro de Custo</th><th className="py-2.5 px-4 text-right">Aquisição</th><th className="py-2.5 px-4 text-center">Ações</th></tr></thead>
+              <tbody className="divide-y divide-[#e9e8e6]">{equipment.map((item) => <tr key={item.id} className="hover:bg-[#f4f3f1]">
+                <td className="px-4 py-3 font-mono font-bold text-[#954a00]">{item.code}</td>
+                <td className="px-4 py-3 font-semibold text-[#1a1c1b]">{item.name}</td>
+                <td className="px-4 py-3">{processes.find((proc) => proc.id === item.processId)?.code || 'Centro removido'}</td>
+                <td className="px-4 py-3 text-right">R$ {item.acquisitionCost.toFixed(2).replace('.', ',')}</td>
+                <td className="px-4 py-3"><div className="flex justify-center gap-1"><button onClick={() => handleOpenEditEquipment(item)} className="p-1.5 text-[#574335] hover:text-[#954a00] rounded-lg" title="Editar equipamento"><Pencil className="w-4 h-4" /></button><button onClick={() => setEquipmentToDelete(item)} className="p-1.5 text-stone-400 hover:text-red-600 rounded-lg" title="Excluir equipamento"><Trash2 className="w-4 h-4" /></button></div></td>
+              </tr>)}</tbody>
+            </table>
+          )}
+        </div>
       </div>
 
       {/* Process Table & Info Container */}
@@ -321,6 +410,22 @@ export const ProductionProcessesView: React.FC<ProductionProcessesViewProps> = (
           </div>
         </div>
       )}
+
+      {isEquipmentModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-[#dec1af] overflow-hidden">
+            <div className="p-4 bg-[#954a00] text-white flex items-center justify-between"><h3 className="font-bold text-sm flex items-center gap-2"><Wrench className="w-4 h-4 text-amber-200" /> {editingEquipment ? 'Editar Equipamento' : 'Novo Equipamento'}</h3><button onClick={() => setIsEquipmentModalOpen(false)}><X className="w-4 h-4" /></button></div>
+            <form onSubmit={handleEquipmentSubmit} className="p-5 space-y-3.5 text-xs">
+              <div className="grid grid-cols-2 gap-3"><div><label className="block font-bold text-[#574335] mb-1">Código do Equipamento *</label><input required value={equipmentCode} onChange={(e) => setEquipmentCode(e.target.value.toUpperCase())} className="w-full p-2.5 border border-[#dec1af] rounded-xl font-mono font-bold" /></div><div><label className="block font-bold text-[#574335] mb-1">Nome do Equipamento *</label><input required value={equipmentName} onChange={(e) => setEquipmentName(e.target.value)} className="w-full p-2.5 border border-[#dec1af] rounded-xl" /></div></div>
+              <div><label className="block font-bold text-[#574335] mb-1">Centro de Custo *</label><select required value={equipmentProcessId} onChange={(e) => setEquipmentProcessId(e.target.value)} className="w-full p-2.5 border border-[#dec1af] rounded-xl bg-white"><option value="">Selecione o centro de custo</option>{processes.map((proc) => <option key={proc.id} value={proc.id}>[{proc.code}] {proc.description}</option>)}</select></div>
+              <div className="grid grid-cols-3 gap-3"><div><label className="block font-bold text-[#574335] mb-1">Custo de Aquisição</label><input type="number" min="0" step="0.01" value={acquisitionCost} onChange={(e) => setAcquisitionCost(e.target.value)} className="w-full p-2.5 border border-[#dec1af] rounded-xl" /></div><div><label className="block font-bold text-[#574335] mb-1">Valor Residual</label><input type="number" min="0" step="0.01" value={residualValue} onChange={(e) => setResidualValue(e.target.value)} className="w-full p-2.5 border border-[#dec1af] rounded-xl" /></div><div><label className="block font-bold text-[#574335] mb-1">Vida Útil Estimada</label><input type="number" min="0" step="1" value={estimatedUsefulLife} onChange={(e) => setEstimatedUsefulLife(e.target.value)} className="w-full p-2.5 border border-[#dec1af] rounded-xl" /><span className="text-[10px] text-[#574335]">anos</span></div></div>
+              <div className="flex justify-end gap-2 pt-3 border-t border-[#dec1af]/30"><button type="button" onClick={() => setIsEquipmentModalOpen(false)} className="px-4 py-2 bg-stone-100 text-[#574335] font-bold rounded-xl">Cancelar</button><button type="submit" className="px-5 py-2 bg-[#954a00] text-white font-bold rounded-xl"><Check className="w-4 h-4 inline mr-1" />Salvar Equipamento</button></div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {equipmentToDelete && <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"><div className="bg-white w-full max-w-sm rounded-2xl p-5 shadow-2xl"><h3 className="font-bold text-sm">Excluir equipamento?</h3><p className="text-xs text-[#574335] mt-2">{equipmentToDelete.code} - {equipmentToDelete.name}</p><div className="flex justify-end gap-2 mt-5"><button onClick={() => setEquipmentToDelete(null)} className="px-4 py-2 bg-stone-100 rounded-xl text-xs font-bold">Cancelar</button><button onClick={() => { onDeleteEquipment(equipmentToDelete.id); setEquipmentToDelete(null); onNotify('Equipamento removido com sucesso!'); }} className="px-4 py-2 bg-red-600 text-white rounded-xl text-xs font-bold">Excluir</button></div></div></div>}
 
       {/* Modal de Confirmação de Exclusão de Processo */}
       {processToDelete && (

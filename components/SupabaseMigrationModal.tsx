@@ -95,6 +95,37 @@ ALTER TABLE public.process_steps ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC;
 ALTER TABLE public.process_steps ADD COLUMN IF NOT EXISTS units_per_hour NUMERIC;
 ALTER TABLE public.process_steps ADD COLUMN IF NOT EXISTS cost_center_code TEXT;
 ALTER TABLE public.process_steps ADD COLUMN IF NOT EXISTS process_id TEXT;
+ALTER TABLE public.process_steps ADD COLUMN IF NOT EXISTS equipment_id TEXT;
+
+-- 4. Centros de Custo e Equipamentos
+CREATE TABLE IF NOT EXISTS public.production_processes (
+    id TEXT PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    hourly_rate NUMERIC NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.equipment (
+    id TEXT PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    process_id TEXT NOT NULL REFERENCES public.production_processes(id) ON DELETE RESTRICT,
+    acquisition_cost NUMERIC NOT NULL DEFAULT 0,
+    residual_value NUMERIC NOT NULL DEFAULT 0,
+    estimated_useful_life NUMERIC NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'process_steps_equipment_id_fkey'
+  ) THEN
+    ALTER TABLE public.process_steps ADD CONSTRAINT process_steps_equipment_id_fkey
+      FOREIGN KEY (equipment_id) REFERENCES public.equipment(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 -- 4. Almoxarifado / Estoque de Insumos
 CREATE TABLE IF NOT EXISTS public.inventory_items (
@@ -164,6 +195,8 @@ ALTER TABLE public.inventory_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stock_movements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.production_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sales_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.production_processes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.equipment ENABLE ROW LEVEL SECURITY;
 
 DO $$
 BEGIN
@@ -187,6 +220,12 @@ BEGIN
 
     DROP POLICY IF EXISTS "Public access sales" ON public.sales_records;
     CREATE POLICY "Public access sales" ON public.sales_records FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public access production processes" ON public.production_processes;
+    CREATE POLICY "Public access production processes" ON public.production_processes FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public access equipment" ON public.equipment;
+    CREATE POLICY "Public access equipment" ON public.equipment FOR ALL USING (true) WITH CHECK (true);
 END $$;`;
 
   const handleCopy = () => {

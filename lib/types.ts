@@ -61,6 +61,7 @@ export interface ProcessStepItem {
   durationFormatted: string;
   hourlyRateText: string;
   processId?: string;
+  equipmentId?: string;
   costCenterCode?: string;
   hourlyRate?: number;
   unitsPerHour?: number;
@@ -112,13 +113,11 @@ export interface Equipment {
   id: string;
   code: string;
   name: string;
-  line: string;
-  oee: number;
-  runtimeHours: number;
-  temperature: number;
-  status: 'Operando' | 'Manutenção' | 'Parada';
-  lastMaintenance: string;
-  imageUrl?: string;
+  processId: string;
+  acquisitionCost: number;
+  residualValue: number;
+  estimatedUsefulLife: number;
+  createdAt?: string;
 }
 
 export interface SaleRecord {
