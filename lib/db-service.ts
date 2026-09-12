@@ -195,6 +195,14 @@ export const dbService = {
     return !error;
   },
 
+  async deleteProductionOrder(id: string): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return false;
+    const { error } = await supabase.from('production_orders').delete().eq('id', id);
+    if (error) console.error('Erro ao excluir Ordem de Produção:', error.message);
+    return !error;
+  },
+
   // LANÇAMENTOS DE PRODUÇÃO POR ETAPA
   async fetchProductionEntries(): Promise<ProductionEntry[] | null> {
     const supabase = getSupabaseClient();

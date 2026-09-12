@@ -12,11 +12,15 @@ CREATE TABLE IF NOT EXISTS public.production_entries (
     order_id TEXT NOT NULL REFERENCES public.production_orders(id) ON DELETE CASCADE,
     step_id TEXT NOT NULL REFERENCES public.process_steps(id) ON DELETE CASCADE,
     quantity_produced NUMERIC NOT NULL DEFAULT 0,
-    started_at TIMESTAMPTZ,
-    ended_at TIMESTAMPTZ,
+    started_at TIME,
+    ended_at TIME,
     entry_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE public.production_entries
+    ALTER COLUMN started_at TYPE TIME USING started_at::time,
+    ALTER COLUMN ended_at TYPE TIME USING ended_at::time;
 
 ALTER TABLE public.production_entries ENABLE ROW LEVEL SECURITY;
 DO $$

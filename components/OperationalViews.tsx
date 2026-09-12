@@ -1,19 +1,17 @@
 'use client';
 
 import React, { useState } from 'react';
-import { BOMComponent, ProcessStepItem, Product, ProductionEntry, ProductionOrder, SaleRecord, ViewMode } from '@/lib/types';
+import { BOMComponent, InventoryItem, ProcessStepItem, Product, ProductionEntry, ProductionOrder, SaleRecord, StockMovement, ViewMode } from '@/lib/types';
 import { 
   ClipboardList, 
   ShoppingCart, 
   Tag, 
   CheckCircle2, 
-  Play, 
-  Pause, 
   Plus, 
   X,
-  Calendar,
   Layers,
-  FileText
+  Pencil,
+  Trash2
 } from 'lucide-react';
 
 interface PurchaseItem {
@@ -36,7 +34,12 @@ interface OperationalViewsProps {
   onAddProductionEntry: (entry: ProductionEntry) => void;
   salesRecords: SaleRecord[];
   onAddProductionOrder?: (order: ProductionOrder) => void;
+  onUpdateProductionOrder: (order: ProductionOrder) => void;
+  onDeleteProductionOrder: (id: string) => void;
   onUpdateOpStatus: (opId: string, newStatus: ProductionOrder['status']) => void;
+  inventoryItems: InventoryItem[];
+  onUpdateInventoryItem: (item: InventoryItem) => void;
+  onAddMovement: (movement: StockMovement) => void;
   onAddSaleRecord?: (sale: SaleRecord) => void;
   onNotify: (msg: string) => void;
 }
@@ -51,7 +54,12 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
   onAddProductionEntry,
   salesRecords,
   onAddProductionOrder,
+  onUpdateProductionOrder,
+  onDeleteProductionOrder,
   onUpdateOpStatus,
+  inventoryItems,
+  onUpdateInventoryItem,
+  onAddMovement,
   onAddSaleRecord,
   onNotify,
 }) => {
@@ -59,6 +67,7 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
   const [isOpModalOpen, setIsOpModalOpen] = useState(false);
   const [isSaleModalOpen, setIsSaleModalOpen] = useState(false);
   const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
+  const [editingOrder, setEditingOrder] = useState<ProductionOrder | null>(null);
 
   // New OP Form
   const [newOpNumber, setNewOpNumber] = useState('OP-2026-001');
@@ -70,7 +79,6 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
   const [entryQuantity, setEntryQuantity] = useState('0');
   const [entryStart, setEntryStart] = useState('');
   const [entryEnd, setEntryEnd] = useState('');
-  const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10));
 
   // New Sale Form
   const [newSaleClient, setNewSaleClient] = useState('');
@@ -94,7 +102,7 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
     }
 
     const order: ProductionOrder = {
-      id: `op-${Date.now()}`,
+      id: editingOrder?.id || `op-${Date.now()}`,
       opNumber: newOpNumber,
       productId: product.id,
       productName: product.name,
@@ -104,16 +112,37 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
       quantity: Number(newOpQuantity) || 1,
       unit: product.unit || 'UN',
       openingDate: newOpOpeningDate,
+      producedQuantity: editingOrder?.producedQuantity || 0,
     };
 
-    if (onAddProductionOrder) {
+    if (editingOrder) {
+      onUpdateProductionOrder(order);
+    } else if (onAddProductionOrder) {
       onAddProductionOrder(order);
     }
     setIsOpModalOpen(false);
     setNewOpProduct('');
+    setEditingOrder(null);
     setNewOpOpeningDate(new Date().toISOString().slice(0, 10));
     setNewOpNumber(`OP-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
     onNotify(`Ordem de Produção ${order.opNumber} criada com sucesso!`);
+  };
+
+  const handleOpenEditOrder = (order: ProductionOrder) => {
+    setEditingOrder(order);
+    setNewOpNumber(order.opNumber);
+    setNewOpProduct(order.productId || '');
+    setNewOpQuantity(order.quantity.toString());
+    setNewOpOpeningDate(order.openingDate.slice(0, 10));
+    setIsOpModalOpen(true);
+  };
+
+  const handleDeleteOrder = (order: ProductionOrder) => {
+    if (window.confirm(`Excluir a OP ${order.opNumber}?`)) {
+      onDeleteProductionOrder(order.id);
+      if (selectedOrderId === order.id) setSelectedOrderId(null);
+      onNotify(`OP ${order.opNumber} excluída.`);
+    }
   };
 
   const selectedOrder = productionOrders.find((order) => order.id === selectedOrderId);
@@ -121,8 +150,37 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
     ? processSteps.filter((step) => !step.productId || step.productId === selectedOrder.productId)
     : [];
   const selectedBOM = selectedOrder
-    ? bomComponents.map((component) => ({ ...component, requiredQuantity: component.quantity * selectedOrder.quantity }))
+    ? bomComponents.map((component) => {
+        const inventory = inventoryItems.find((item) => item.name.toLowerCase() === component.name.toLowerCase());
+        return { ...component, requiredQuantity: component.quantity * selectedOrder.quantity, stockBalance: inventory?.balance || 0, inventory };
+      })
     : [];
+
+  const handleSeparateMaterials = () => {
+    if (!selectedOrder) return;
+    const unavailable = selectedBOM.filter((item) => !item.inventory || item.stockBalance < item.requiredQuantity);
+    if (unavailable.length > 0) {
+      onNotify(`Saldo insuficiente para: ${unavailable.map((item) => item.name).join(', ')}`);
+      return;
+    }
+
+    selectedBOM.forEach((item) => {
+      if (!item.inventory) return;
+      const updated = { ...item.inventory, balance: item.inventory.balance - item.requiredQuantity };
+      onUpdateInventoryItem(updated);
+      onAddMovement({
+        id: `mov-${Date.now()}-${item.id}`,
+        type: 'saida',
+        title: `Separação ${selectedOrder.opNumber}`,
+        itemName: item.name,
+        itemCode: item.inventory.code,
+        quantity: item.requiredQuantity,
+        unit: item.unit,
+        timestamp: new Date().toISOString(),
+      });
+    });
+    onNotify(`Materiais da OP ${selectedOrder.opNumber} separados e baixados do estoque.`);
+  };
 
   const handleCreateProductionEntry = (event: React.FormEvent) => {
     event.preventDefault();
@@ -134,7 +192,7 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
       quantityProduced: Number(entryQuantity) || 0,
       startedAt: entryStart || undefined,
       endedAt: entryEnd || undefined,
-      entryDate,
+      entryDate: new Date().toISOString(),
     };
     onAddProductionEntry(entry);
     setEntryQuantity('0');
@@ -284,29 +342,18 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
                           <button onClick={() => setSelectedOrderId(op.id)} className="p-1.5 rounded-lg hover:bg-amber-100 text-[#954a00] transition-colors" title="Lançamentos e separação">
                             <Layers className="w-4 h-4" />
                           </button>
-                          {op.status === 'Em Andamento' ? (
-                            <button
-                              onClick={() => onUpdateOpStatus(op.id, 'Parada')}
-                              className="p-1.5 rounded-lg hover:bg-red-100 text-red-600 transition-colors"
-                              title="Pausar Lote"
-                            >
-                              <Pause className="w-4 h-4" />
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => onUpdateOpStatus(op.id, 'Em Andamento')}
-                              className="p-1.5 rounded-lg hover:bg-emerald-100 text-emerald-600 transition-colors"
-                              title="Iniciar Lote"
-                            >
-                              <Play className="w-4 h-4" />
-                            </button>
-                          )}
+                          <button onClick={() => handleOpenEditOrder(op)} className="p-1.5 rounded-lg hover:bg-amber-100 text-[#954a00] transition-colors" title="Editar OP">
+                            <Pencil className="w-4 h-4" />
+                          </button>
                           <button
                             onClick={() => onUpdateOpStatus(op.id, 'Concluída')}
                             className="p-1.5 rounded-lg hover:bg-emerald-100 text-emerald-700 transition-colors"
-                            title="Concluir Lote"
+                            title="Concluir OP"
                           >
                             <CheckCircle2 className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => handleDeleteOrder(op)} className="p-1.5 rounded-lg hover:bg-red-100 text-red-600 transition-colors" title="Excluir OP">
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </td>
@@ -329,13 +376,13 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
                 <h3 className="font-bold text-xs text-[#1a1c1b] mb-2">Lançamento por etapa</h3>
                 <form onSubmit={handleCreateProductionEntry} className="space-y-3 text-xs">
                   <select required value={entryStepId} onChange={(e) => setEntryStepId(e.target.value)} className="w-full p-2.5 border border-[#dec1af] rounded-lg bg-white"><option value="">Selecione uma etapa do roteiro</option>{selectedRoute.map((step) => <option key={step.id} value={step.id}>{step.stepNumber} - {step.title}</option>)}</select>
-                  <div className="grid grid-cols-2 gap-3"><label className="font-semibold">Quantidade produzida<input type="number" min="0" step="0.01" value={entryQuantity} onChange={(e) => setEntryQuantity(e.target.value)} className="w-full mt-1 p-2.5 border border-[#dec1af] rounded-lg font-normal" /></label><label className="font-semibold">Data do lançamento<input type="date" required value={entryDate} onChange={(e) => setEntryDate(e.target.value)} className="w-full mt-1 p-2.5 border border-[#dec1af] rounded-lg font-normal" /></label></div>
-                  <div className="grid grid-cols-2 gap-3"><label className="font-semibold">Início<input type="datetime-local" value={entryStart} onChange={(e) => setEntryStart(e.target.value)} className="w-full mt-1 p-2.5 border border-[#dec1af] rounded-lg font-normal" /></label><label className="font-semibold">Término<input type="datetime-local" value={entryEnd} onChange={(e) => setEntryEnd(e.target.value)} className="w-full mt-1 p-2.5 border border-[#dec1af] rounded-lg font-normal" /></label></div>
+                  <div><label className="font-semibold">Quantidade produzida<input type="number" min="0" step="0.01" value={entryQuantity} onChange={(e) => setEntryQuantity(e.target.value)} className="w-full mt-1 p-2.5 border border-[#dec1af] rounded-lg font-normal" /></label></div>
+                  <div className="grid grid-cols-2 gap-3"><label className="font-semibold">Início<input type="time" value={entryStart} onChange={(e) => setEntryStart(e.target.value)} className="w-full mt-1 p-2.5 border border-[#dec1af] rounded-lg font-normal" /></label><label className="font-semibold">Término<input type="time" value={entryEnd} onChange={(e) => setEntryEnd(e.target.value)} className="w-full mt-1 p-2.5 border border-[#dec1af] rounded-lg font-normal" /></label></div>
                   <button type="submit" className="px-4 py-2 bg-[#954a00] text-white rounded-xl font-bold">Registrar produção</button>
                 </form>
                 <div className="mt-4 space-y-1">{productionEntries.filter((entry) => entry.orderId === selectedOrder.id).map((entry) => <div key={entry.id} className="text-[11px] p-2 bg-[#f4f3f1] rounded-lg">{selectedRoute.find((step) => step.id === entry.stepId)?.title || 'Etapa'}: <b>{entry.quantityProduced}</b> un | {new Date(entry.entryDate).toLocaleDateString('pt-BR')}</div>)}</div>
               </div>
-              <div><h3 className="font-bold text-xs text-[#1a1c1b] mb-2">Folha de necessidade para separação</h3><div className="border border-[#dec1af]/50 rounded-lg overflow-hidden"><table className="w-full text-xs"><thead className="bg-[#f4f3f1]"><tr><th className="text-left p-2">Insumo</th><th className="text-right p-2">Necessidade</th><th className="text-right p-2">Un.</th></tr></thead><tbody className="divide-y divide-[#e9e8e6]">{selectedBOM.map((item) => <tr key={item.id}><td className="p-2 font-semibold">{item.name}</td><td className="p-2 text-right">{item.requiredQuantity.toFixed(2)}</td><td className="p-2 text-right">{item.unit}</td></tr>)}</tbody></table></div></div>
+              <div><div className="flex items-center justify-between mb-2"><h3 className="font-bold text-xs text-[#1a1c1b]">Folha de necessidade para separação</h3><button type="button" onClick={handleSeparateMaterials} className="px-3 py-1.5 bg-[#954a00] text-white rounded-lg text-[11px] font-bold">Separar itens</button></div><div className="border border-[#dec1af]/50 rounded-lg overflow-hidden"><table className="w-full text-xs"><thead className="bg-[#f4f3f1]"><tr><th className="text-left p-2">Insumo</th><th className="text-right p-2">Necessidade</th><th className="text-right p-2">Estoque</th><th className="text-right p-2">Un.</th></tr></thead><tbody className="divide-y divide-[#e9e8e6]">{selectedBOM.map((item) => <tr key={item.id}><td className="p-2 font-semibold">{item.name}</td><td className="p-2 text-right">{item.requiredQuantity.toFixed(2)}</td><td className={`p-2 text-right font-bold ${item.stockBalance < item.requiredQuantity ? 'text-red-600' : 'text-emerald-700'}`}>{item.stockBalance.toFixed(2)}</td><td className="p-2 text-right">{item.unit}</td></tr>)}</tbody></table></div></div>
             </div>
           </div>
         )}

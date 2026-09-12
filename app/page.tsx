@@ -372,6 +372,16 @@ export default function MaCarvalhoApp() {
     showNotification(`Status da OP atualizado para "${newStatus}"!`);
   };
 
+  const handleUpdateProductionOrder = (updated: ProductionOrder) => {
+    setProductionOrders((prev) => prev.map((order) => (order.id === updated.id ? updated : order)));
+    dbService.saveProductionOrder(updated).catch(() => showNotification('Erro ao atualizar a OP no banco.'));
+  };
+
+  const handleDeleteProductionOrder = (id: string) => {
+    setProductionOrders((prev) => prev.filter((order) => order.id !== id));
+    dbService.deleteProductionOrder(id).catch(() => showNotification('Erro ao excluir a OP no banco.'));
+  };
+
   const handleAddProductionEntry = (entry: ProductionEntry) => {
     setProductionEntries((prev) => [entry, ...prev]);
     dbService.saveProductionEntry(entry).catch(() => showNotification('Erro ao salvar lançamento de produção no banco.'));
@@ -504,6 +514,9 @@ export default function MaCarvalhoApp() {
               processSteps={processSteps}
               productionEntries={productionEntries}
               onAddProductionEntry={handleAddProductionEntry}
+              inventoryItems={inventoryItems}
+              onUpdateInventoryItem={handleUpdateInventoryItem}
+              onAddMovement={handleAddMovement}
               salesRecords={salesRecords}
               onAddProductionOrder={(newOp) => {
                 setProductionOrders((prev) => [newOp, ...prev]);
@@ -511,6 +524,8 @@ export default function MaCarvalhoApp() {
                   if (!saved && isSupabaseConfigured()) showNotification('Não foi possível salvar a OP no banco. Execute a migration de OPs no Supabase.');
                 });
               }}
+              onUpdateProductionOrder={handleUpdateProductionOrder}
+              onDeleteProductionOrder={handleDeleteProductionOrder}
               onUpdateOpStatus={handleUpdateOpStatus}
               onAddSaleRecord={(newSale) => {
                 setSalesRecords((prev) => [newSale, ...prev]);
