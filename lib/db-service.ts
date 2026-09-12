@@ -10,7 +10,13 @@ import {
   ProductionMaterialSeparation,
   SaleRecord,
   ProductionProcess,
-  Equipment
+  Equipment,
+  CostEmployee,
+  CostCharge,
+  CostDriver,
+  IndirectCost,
+  EquipmentMaintenance,
+  CostOperation
 } from './types';
 
 export const dbService = {
@@ -221,6 +227,7 @@ export const dbService = {
       startedAt: row.started_at || undefined,
       endedAt: row.ended_at || undefined,
       entryDate: row.entry_date,
+      employeeId: row.employee_id || undefined,
     }));
   },
 
@@ -235,6 +242,7 @@ export const dbService = {
       started_at: entry.startedAt,
       ended_at: entry.endedAt,
       entry_date: entry.entryDate,
+      employee_id: entry.employeeId,
     });
     return !error;
   },
@@ -253,6 +261,9 @@ export const dbService = {
       inventoryItemId: row.inventory_item_id,
       quantity: Number(row.quantity || 0),
       separatedAt: row.separated_at,
+      unitCostSnapshot: row.unit_cost_snapshot !== null && row.unit_cost_snapshot !== undefined ? Number(row.unit_cost_snapshot) : undefined,
+      totalCost: row.total_cost !== null && row.total_cost !== undefined ? Number(row.total_cost) : undefined,
+      competenceDate: row.competence_date || undefined,
     }));
   },
 
@@ -265,6 +276,9 @@ export const dbService = {
       inventory_item_id: separation.inventoryItemId,
       quantity: separation.quantity,
       separated_at: separation.separatedAt,
+      unit_cost_snapshot: separation.unitCostSnapshot,
+      total_cost: separation.totalCost,
+      competence_date: separation.competenceDate,
     });
     if (error) console.error('Erro ao salvar separação de material:', error.message);
     return !error;
@@ -432,6 +446,12 @@ export const dbService = {
       quantity: Number(row.quantity),
       unit: row.unit,
       timestamp: row.timestamp,
+      productionOrderId: row.production_order_id || undefined,
+      productId: row.product_id || undefined,
+      sourceType: row.source_type || undefined,
+      sourceId: row.source_id || undefined,
+      unitCost: row.unit_cost !== null && row.unit_cost !== undefined ? Number(row.unit_cost) : undefined,
+      totalCost: row.total_cost !== null && row.total_cost !== undefined ? Number(row.total_cost) : undefined,
     }));
   },
 
@@ -448,6 +468,12 @@ export const dbService = {
       quantity: mov.quantity,
       unit: mov.unit,
       timestamp: mov.timestamp,
+      production_order_id: mov.productionOrderId,
+      product_id: mov.productId,
+      source_type: mov.sourceType,
+      source_id: mov.sourceId,
+      unit_cost: mov.unitCost,
+      total_cost: mov.totalCost,
     });
 
     return !error;
@@ -589,6 +615,11 @@ export const dbService = {
       acquisitionCost: Number(row.acquisition_cost || 0),
       residualValue: Number(row.residual_value || 0),
       estimatedUsefulLife: Number(row.estimated_useful_life || 0),
+      powerKw: Number(row.power_kw || 0),
+      energyTariff: Number(row.energy_tariff || 0),
+      maintenanceCostPerHour: Number(row.maintenance_cost_per_hour || 0),
+      otherCostPerHour: Number(row.other_cost_per_hour || 0),
+      productiveHoursAvailable: Number(row.productive_hours_available || 220),
       createdAt: row.created_at,
     }));
   },
@@ -614,6 +645,11 @@ export const dbService = {
       acquisition_cost: equipment.acquisitionCost,
       residual_value: equipment.residualValue,
       estimated_useful_life: equipment.estimatedUsefulLife,
+      power_kw: equipment.powerKw || 0,
+      energy_tariff: equipment.energyTariff || 0,
+      maintenance_cost_per_hour: equipment.maintenanceCostPerHour || 0,
+      other_cost_per_hour: equipment.otherCostPerHour || 0,
+      productive_hours_available: equipment.productiveHoursAvailable || 220,
       created_at: equipment.createdAt || new Date().toISOString(),
     });
     return !error;
@@ -633,5 +669,134 @@ export const dbService = {
     if (!supabase || !isSupabaseConfigured()) return true;
     const { error } = await supabase.from('equipment').delete().eq('id', id);
     return !error;
-  }
+  },
+
+  // INDUSTRIAL COSTS
+  async fetchCostEmployees(): Promise<CostEmployee[] | null> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return null;
+    const { data, error } = await supabase.from('cost_employees').select('*').order('name');
+    if (error) return null;
+    return (data || []).map((row: any) => ({
+      id: row.id, code: row.code, name: row.name, role: row.role, sector: row.sector,
+      processId: row.process_id || undefined, laborType: row.labor_type,
+      baseSalary: Number(row.base_salary || 0), additions: Number(row.additions || 0), benefits: Number(row.benefits || 0),
+      chargePercent: Number(row.charge_percent || 0), monthlyHours: Number(row.monthly_hours || 0), productiveHours: Number(row.productive_hours || 0), hourlyCost: Number(row.hourly_cost || 0),
+      validFrom: row.valid_from || undefined, validUntil: row.valid_until || undefined, active: row.active !== false,
+    }));
+  },
+
+  async saveCostEmployee(employee: CostEmployee): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return false;
+    const { error } = await supabase.from('cost_employees').upsert({
+      id: employee.id, code: employee.code, name: employee.name, role: employee.role, sector: employee.sector,
+      process_id: employee.processId, labor_type: employee.laborType, base_salary: employee.baseSalary, additions: employee.additions,
+      benefits: employee.benefits, charge_percent: employee.chargePercent, monthly_hours: employee.monthlyHours,
+      productive_hours: employee.productiveHours, hourly_cost: employee.hourlyCost, valid_from: employee.validFrom,
+      valid_until: employee.validUntil, active: employee.active, updated_at: new Date().toISOString(),
+    });
+    return !error;
+  },
+
+  async fetchCostCharges(): Promise<CostCharge[] | null> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return null;
+    const { data, error } = await supabase.from('cost_charges').select('*').order('code');
+    if (error) return null;
+    return (data || []).map((row: any) => ({ id: row.id, code: row.code, description: row.description, percent: Number(row.percent || 0), chargeType: row.charge_type, validFrom: row.valid_from || undefined, validUntil: row.valid_until || undefined, active: row.active !== false }));
+  },
+
+  async saveCostCharge(charge: CostCharge): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return false;
+    const { error } = await supabase.from('cost_charges').upsert({ id: charge.id, code: charge.code, description: charge.description, percent: charge.percent, charge_type: charge.chargeType, valid_from: charge.validFrom, valid_until: charge.validUntil, active: charge.active });
+    return !error;
+  },
+
+  async fetchCostDrivers(): Promise<CostDriver[] | null> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return null;
+    const { data, error } = await supabase.from('cost_drivers').select('*').order('code');
+    if (error) return null;
+    return (data || []).map((row: any) => ({ id: row.id, code: row.code, description: row.description, driverType: row.driver_type, unit: row.unit, active: row.active !== false }));
+  },
+
+  async saveCostDriver(driver: CostDriver): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return false;
+    const { error } = await supabase.from('cost_drivers').upsert({ id: driver.id, code: driver.code, description: driver.description, driver_type: driver.driverType, unit: driver.unit, active: driver.active });
+    return !error;
+  },
+
+  async fetchIndirectCosts(): Promise<IndirectCost[] | null> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return null;
+    const { data, error } = await supabase.from('cost_indirect').select('*').order('competence', { ascending: false });
+    if (error) return null;
+    return (data || []).map((row: any) => ({ id: row.id, code: row.code, description: row.description, category: row.category, processId: row.process_id || undefined, amount: Number(row.amount || 0), competence: row.competence, classification: row.classification, driverId: row.driver_id || undefined, observation: row.observation || '', active: row.active !== false }));
+  },
+
+  async saveIndirectCost(cost: IndirectCost): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return false;
+    const { error } = await supabase.from('cost_indirect').upsert({ id: cost.id, code: cost.code, description: cost.description, category: cost.category, process_id: cost.processId, amount: cost.amount, competence: cost.competence, classification: cost.classification, driver_id: cost.driverId, observation: cost.observation, active: cost.active });
+    return !error;
+  },
+
+  async fetchMaintenance(): Promise<EquipmentMaintenance[] | null> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return null;
+    const { data, error } = await supabase.from('equipment_maintenance').select('*').order('maintenance_date', { ascending: false });
+    if (error) return null;
+    return (data || []).map((row: any) => ({ id: row.id, equipmentId: row.equipment_id, processId: row.process_id || undefined, maintenanceType: row.maintenance_type, maintenanceDate: row.maintenance_date, amount: Number(row.amount || 0), supplier: row.supplier || '', observation: row.observation || '' }));
+  },
+
+  async saveMaintenance(maintenance: EquipmentMaintenance): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return false;
+    const { error } = await supabase.from('equipment_maintenance').upsert({ id: maintenance.id, equipment_id: maintenance.equipmentId, process_id: maintenance.processId, maintenance_type: maintenance.maintenanceType, maintenance_date: maintenance.maintenanceDate, amount: maintenance.amount, supplier: maintenance.supplier, observation: maintenance.observation });
+    return !error;
+  },
+
+  async saveCostOperation(operation: CostOperation): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return false;
+    const { error } = await supabase.from('cost_op').upsert({ id: operation.id, order_id: operation.orderId, status: operation.status, planned_quantity: operation.plannedQuantity, finished_quantity: operation.finishedQuantity, yield_percent: operation.yieldPercent, loss_quantity: operation.lossQuantity, material_cost: operation.materialCost, direct_labor_cost: operation.directLaborCost, indirect_labor_cost: operation.indirectLaborCost, energy_cost: operation.energyCost, maintenance_cost: operation.maintenanceCost, depreciation_cost: operation.depreciationCost, other_indirect_cost: operation.otherIndirectCost, total_cost: operation.totalCost, unit_cost: operation.unitCost, version: operation.version, recalculation_reason: operation.recalculationReason, calculated_at: operation.calculatedAt, closed_at: operation.closedAt });
+    if (error) return false;
+    const items = operation.items.map((item) => ({ id: item.id, cost_op_id: operation.id, category: item.category, source_id: item.sourceId, description: item.description, quantity: item.quantity, unit_cost: item.unitCost, amount: item.amount }));
+    const steps = operation.steps.map((step) => ({ id: step.id, cost_op_id: operation.id, step_id: step.stepId, duration_hours: step.durationHours, man_hours: step.manHours, labor_cost: step.laborCost, equipment_cost: step.equipmentCost, energy_cost: step.energyCost, maintenance_cost: step.maintenanceCost, depreciation_cost: step.depreciationCost, total_cost: step.totalCost }));
+    if (items.length > 0 && !(await supabase.from('cost_op_items').upsert(items)).error) {
+      if (steps.length === 0 || !(await supabase.from('cost_op_steps').upsert(steps)).error) return true;
+    }
+    return items.length === 0 && (steps.length === 0 || !(await supabase.from('cost_op_steps').upsert(steps)).error);
+  },
+
+  async createFinishedProductEntryIfMissing(order: ProductionOrder, product: Product, quantity: number, unitCost: number): Promise<{ success: boolean; created: boolean }> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured() || quantity <= 0) return { success: false, created: false };
+    const existing = await supabase.from('stock_movements').select('id').eq('production_order_id', order.id).eq('source_type', 'finished_product').limit(1);
+    if (existing.error) return { success: false, created: false };
+    if ((existing.data || []).length > 0) return { success: true, created: false };
+    const updatedProduct = { ...product, stock: product.stock + quantity };
+    const savedProduct = await this.saveProduct(updatedProduct);
+    if (!savedProduct) return { success: false, created: false };
+    const { error } = await supabase.from('stock_movements').insert({
+      id: `finished-${order.id}`,
+      type: 'entrada',
+      title: `Entrada produto acabado ${order.opNumber}`,
+      item_name: product.name,
+      item_code: product.code,
+      product_id: product.id,
+      production_order_id: order.id,
+      source_type: 'finished_product',
+      source_id: order.id,
+      quantity,
+      unit: product.unit,
+      unit_cost: unitCost,
+      total_cost: quantity * unitCost,
+      timestamp: new Date().toISOString(),
+    });
+    return { success: !error, created: !error };
+  },
 };

@@ -194,6 +194,11 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
         itemCode: item.inventory.code,
         quantity: item.requiredQuantity,
         unit: item.unit,
+        productionOrderId: selectedOrder.id,
+        sourceType: 'material_separation',
+        sourceId: item.inventory.id,
+        unitCost: item.inventory.unitCost,
+        totalCost: item.requiredQuantity * item.inventory.unitCost,
         timestamp: new Date().toISOString(),
       });
       onAddMaterialSeparation({
@@ -202,6 +207,9 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
         inventoryItemId: item.inventory.id,
         quantity: item.requiredQuantity,
         separatedAt: new Date().toISOString(),
+        unitCostSnapshot: item.inventory.unitCost,
+        totalCost: item.requiredQuantity * item.inventory.unitCost,
+        competenceDate: new Date().toISOString().slice(0, 10),
       });
     });
     setIsSeparationConfirmOpen(false);

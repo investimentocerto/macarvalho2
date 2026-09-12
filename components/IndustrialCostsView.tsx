@@ -1,568 +1,105 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { Calculator, CheckCircle2, DollarSign, Factory, FileText, Pencil, Plus, Trash2, Copy, TrendingUp } from 'lucide-react';
-import {
-  INDUSTRIAL_COSTS_STORAGE_KEY,
-  INDUSTRIAL_COST_MONTHS,
-  IndustrialCostRecord,
-  calculateIndustrialCostSnapshot,
-  formatBarValue,
-  formatCurrency,
-  getNextMonth,
-} from '@/lib/industrial-costs';
+import React, { useEffect, useState } from 'react';
+import { Calculator, Plus } from 'lucide-react';
+import { dbService } from '@/lib/db-service';
+import { calculateEmployeeHourlyCost, calculateProductionOrderCost, formatCurrency } from '@/lib/industrial-costs';
+import { CostCharge, CostEmployee, CostOperation, Equipment, EquipmentMaintenance, IndirectCost, InventoryItem, ProcessStepItem, ProductionEntry, ProductionMaterialSeparation, ProductionOrder, ProductionProcess, Product } from '@/lib/types';
 
 interface IndustrialCostsViewProps {
+  products: Product[];
+  orders: ProductionOrder[];
+  entries: ProductionEntry[];
+  steps: ProcessStepItem[];
+  separations: ProductionMaterialSeparation[];
+  inventory: InventoryItem[];
+  equipment: Equipment[];
+  processes: ProductionProcess[];
+  onCloseOrder?: (order: ProductionOrder, operation: CostOperation) => void;
   onNotify?: (message: string) => void;
 }
 
-const currentYear = new Date().getFullYear();
-const currentMonth = new Date().getMonth() + 1;
+type Tab = 'apuracao' | 'ops' | 'colaboradores' | 'encargos' | 'equipamentos' | 'depreciacao' | 'manutencao' | 'indiretos';
+const tabs: [Tab, string][] = [['apuracao', 'Apuração'], ['ops', 'OPs'], ['colaboradores', 'Colaboradores'], ['encargos', 'Encargos'], ['equipamentos', 'Equipamentos'], ['depreciacao', 'Depreciação'], ['manutencao', 'Manutenção'], ['indiretos', 'Custos Indiretos']];
+const inputClass = 'w-full rounded-lg border border-[#dec1af] bg-white px-3 py-2 text-xs';
 
-const defaultForm = {
-  year: currentYear,
-  month: currentMonth,
-  productionQuantity: 100000,
-  erpTotalCost: 100000,
-  utilities: 5000,
-  consumables: 2500,
-  notes: '',
-};
-
-function loadRecords(): IndustrialCostRecord[] {
-  if (typeof window === 'undefined') return [];
-
-  try {
-    const raw = localStorage.getItem(INDUSTRIAL_COSTS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveRecords(records: IndustrialCostRecord[]) {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(INDUSTRIAL_COSTS_STORAGE_KEY, JSON.stringify(records));
-}
-
-function buildEmptyRecord(form: typeof defaultForm): IndustrialCostRecord {
-  return {
-    id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
-    year: Number(form.year),
-    month: Number(form.month),
-    productionQuantity: Number(form.productionQuantity),
-    erpTotalCost: Number(form.erpTotalCost),
-    utilities: Number(form.utilities),
-    consumables: Number(form.consumables),
-    notes: form.notes || '',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-}
-
-export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({ onNotify }) => {
-  const [records, setRecords] = useState<IndustrialCostRecord[]>([]);
-  const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
-  const [form, setForm] = useState(defaultForm);
-  const [validationError, setValidationError] = useState<string | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
-  const [filterYear, setFilterYear] = useState(currentYear);
-  const [filterMonth, setFilterMonth] = useState('');
+export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({ orders, entries, steps, separations, inventory, equipment, onCloseOrder, onNotify }) => {
+  const [tab, setTab] = useState<Tab>('apuracao');
+  const [orderId, setOrderId] = useState(orders[0]?.id || '');
+  const [operation, setOperation] = useState<CostOperation | null>(null);
+  const [employees, setEmployees] = useState<CostEmployee[]>([]);
+  const [charges, setCharges] = useState<CostCharge[]>([]);
+  const [indirectCosts, setIndirectCosts] = useState<IndirectCost[]>([]);
+  const [maintenance, setMaintenance] = useState<EquipmentMaintenance[]>([]);
+  const [employee, setEmployee] = useState({ code: '', name: '', role: '', sector: '', salary: '0', charges: '0', hours: '0', laborType: 'DIRETA' as CostEmployee['laborType'] });
+  const [charge, setCharge] = useState({ code: '', description: '', percent: '0' });
+  const [indirect, setIndirect] = useState({ code: '', description: '', category: 'Energia', amount: '0', competence: new Date().toISOString().slice(0, 10) });
+  const [maintenanceForm, setMaintenanceForm] = useState({ equipmentId: equipment[0]?.id || '', amount: '0', date: new Date().toISOString().slice(0, 10), type: 'Preventiva' });
 
   useEffect(() => {
-    setRecords(loadRecords());
+    Promise.all([dbService.fetchCostEmployees(), dbService.fetchCostCharges(), dbService.fetchIndirectCosts(), dbService.fetchMaintenance()]).then(([loadedEmployees, loadedCharges, loadedIndirect, loadedMaintenance]) => {
+      if (loadedEmployees) setEmployees(loadedEmployees);
+      if (loadedCharges) setCharges(loadedCharges);
+      if (loadedIndirect) setIndirectCosts(loadedIndirect);
+      if (loadedMaintenance) setMaintenance(loadedMaintenance);
+    });
   }, []);
 
-  const filteredRecords = useMemo(() => {
-    return records.filter((record) => {
-      const matchesYear = filterYear ? Number(record.year) === Number(filterYear) : true;
-      const matchesMonth = filterMonth ? Number(record.month) === Number(filterMonth) : true;
-      return matchesYear && matchesMonth;
-    });
-  }, [records, filterYear, filterMonth]);
-
-  const selectedRecord = records.find((record) => record.id === selectedRecordId) || null;
-
-  const currentSnapshot = useMemo(() => {
-    const snapshot = calculateIndustrialCostSnapshot({
-      erpTotalCost: Number(form.erpTotalCost),
-      utilities: Number(form.utilities),
-      consumables: Number(form.consumables),
-      productionQuantity: Number(form.productionQuantity),
-    });
-
-    return snapshot;
-  }, [form]);
-
-  const cardStats = useMemo(() => {
-    if (records.length === 0) {
-      return {
-        erpTotalCost: 0,
-        utilities: 0,
-        consumables: 0,
-        totalAdditional: 0,
-        productionQuantity: 0,
-        erpPerBar: 0,
-        additionalPerBar: 0,
-        realisticCost: 0,
-        realisticCostPerBar: 0,
-      };
-    }
-
-    const latest = [...records].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
-    const snapshot = calculateIndustrialCostSnapshot(latest);
-
-    return {
-      erpTotalCost: latest.erpTotalCost,
-      utilities: latest.utilities,
-      consumables: latest.consumables,
-      totalAdditional: snapshot.totalAdditionalCost,
-      productionQuantity: latest.productionQuantity,
-      erpPerBar: latest.productionQuantity > 0 ? latest.erpTotalCost / latest.productionQuantity : 0,
-      additionalPerBar: snapshot.additionalCostPerBar,
-      realisticCost: snapshot.realisticCost,
-      realisticCostPerBar: snapshot.realisticCostPerBar,
-    };
-  }, [records]);
-
-  const saveRecord = () => {
-    const yearValue = Number(form.year);
-    const monthValue = Number(form.month);
-    const productionQuantity = Number(form.productionQuantity);
-    const erpTotalCost = Number(form.erpTotalCost);
-    const utilities = Number(form.utilities);
-    const consumables = Number(form.consumables);
-
-    if (!yearValue) {
-      setValidationError('Informe o ano.');
-      return;
-    }
-
-    if (!monthValue) {
-      setValidationError('Informe o mês.');
-      return;
-    }
-
-    if (utilities < 0) {
-      setValidationError('O valor não pode ser negativo.');
-      return;
-    }
-
-    if (consumables < 0) {
-      setValidationError('O valor não pode ser negativo.');
-      return;
-    }
-
-    if (productionQuantity <= 0) {
-      setValidationError('A quantidade produzida deve ser maior que zero.');
-      return;
-    }
-
-    const duplicate = records.some(
-      (record) =>
-        record.year === yearValue &&
-        record.month === monthValue &&
-        (!isEditing || record.id !== selectedRecordId)
-    );
-
-    if (duplicate) {
-      setValidationError('Já existe um cadastro para este mês.');
-      return;
-    }
-
-    const nextRecord = buildEmptyRecord(form);
-    const existing = isEditing && selectedRecordId ? records : [];
-
-    const updatedList = isEditing && selectedRecordId
-      ? records.map((record) => (record.id === selectedRecordId ? { ...record, ...nextRecord, updatedAt: new Date().toISOString() } : record))
-      : [nextRecord, ...records];
-
-    setRecords(updatedList);
-    saveRecords(updatedList);
-    setValidationError(null);
-    setSelectedRecordId(isEditing && selectedRecordId ? selectedRecordId : nextRecord.id);
-    setIsEditing(false);
-    if (onNotify) onNotify('Dados salvos com sucesso.');
+  const calculate = () => {
+    const order = orders.find((item) => item.id === orderId);
+    if (!order) return;
+    const result = calculateProductionOrderCost({ order, entries, steps, separations, inventory, employees, equipment, indirectCosts, maintenance });
+    setOperation(result);
+    dbService.saveCostOperation(result).then((saved) => onNotify?.(saved ? 'Custo da OP apurado e salvo.' : 'Falha ao salvar a apuração no banco.'));
   };
 
-  const handleEdit = (record: IndustrialCostRecord) => {
-    setIsEditing(true);
-    setSelectedRecordId(record.id);
-    setForm({
-      year: record.year,
-      month: record.month,
-      productionQuantity: record.productionQuantity,
-      erpTotalCost: record.erpTotalCost,
-      utilities: record.utilities,
-      consumables: record.consumables,
-      notes: record.notes,
-    });
-    setValidationError(null);
+  const saveEmployee = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const item: CostEmployee = { id: `employee-${Date.now()}`, code: employee.code, name: employee.name, role: employee.role, sector: employee.sector, laborType: employee.laborType, baseSalary: Number(employee.salary) || 0, additions: 0, benefits: 0, chargePercent: Number(employee.charges) || 0, monthlyHours: Number(employee.hours) || 0, productiveHours: Number(employee.hours) || 0, hourlyCost: 0, active: true };
+    item.hourlyCost = calculateEmployeeHourlyCost(item);
+    if (await dbService.saveCostEmployee(item)) { setEmployees((current) => [item, ...current]); onNotify?.('Colaborador cadastrado.'); }
   };
 
-  const handleDuplicate = (record: IndustrialCostRecord) => {
-    const { year, month } = getNextMonth(record.year, record.month);
-    const duplicateRecord = {
-      ...record,
-      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
-      year,
-      month,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      notes: record.notes ? `${record.notes} (duplicado)` : 'Duplicado',
-    };
-
-    const updatedList = [duplicateRecord, ...records];
-    setRecords(updatedList);
-    saveRecords(updatedList);
-    if (onNotify) onNotify('Cadastro duplicado com sucesso.');
+  const saveCharge = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const item: CostCharge = { id: `charge-${Date.now()}`, code: charge.code, description: charge.description, percent: Number(charge.percent) || 0, chargeType: 'OUTROS', active: true };
+    if (await dbService.saveCostCharge(item)) { setCharges((current) => [item, ...current]); onNotify?.('Encargo cadastrado.'); }
   };
 
-  const handleDelete = (recordId: string) => {
-    const target = records.find((record) => record.id === recordId);
-    if (!target) return;
-
-    const updatedList = records.filter((record) => record.id !== recordId);
-    setRecords(updatedList);
-    saveRecords(updatedList);
-
-    if (selectedRecordId === recordId) {
-      setSelectedRecordId(null);
-      setIsEditing(false);
-      setForm(defaultForm);
-    }
-
-    if (onNotify) onNotify('Cadastro removido com sucesso.');
+  const saveIndirect = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const item: IndirectCost = { id: `indirect-${Date.now()}`, code: indirect.code, description: indirect.description, category: indirect.category, amount: Number(indirect.amount) || 0, competence: indirect.competence, classification: 'FIXO', observation: '', active: true };
+    if (await dbService.saveIndirectCost(item)) { setIndirectCosts((current) => [item, ...current]); onNotify?.('Custo indireto cadastrado.'); }
   };
 
-  const handleReset = () => {
-    setIsEditing(false);
-    setSelectedRecordId(null);
-    setForm(defaultForm);
-    setValidationError(null);
+  const saveMaintenance = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const item: EquipmentMaintenance = { id: `maintenance-${Date.now()}`, equipmentId: maintenanceForm.equipmentId, maintenanceType: maintenanceForm.type, maintenanceDate: maintenanceForm.date, amount: Number(maintenanceForm.amount) || 0, supplier: '', observation: '' };
+    if (await dbService.saveMaintenance(item)) { setMaintenance((current) => [item, ...current]); onNotify?.('Manutenção cadastrada.'); }
   };
 
-  const summaryCards = [
-    { label: 'Custo do ERP', value: formatCurrency(cardStats.erpTotalCost), icon: DollarSign },
-    { label: 'Utilidades', value: formatCurrency(cardStats.utilities), icon: Calculator },
-    { label: 'Consumíveis', value: formatCurrency(cardStats.consumables), icon: FileText },
-    { label: 'Total de Custos Adicionais', value: formatCurrency(cardStats.totalAdditional), icon: TrendingUp },
-    { label: 'Quantidade Produzida', value: `${new Intl.NumberFormat('pt-BR').format(cardStats.productionQuantity)} barras`, icon: Factory },
-    { label: 'Custo do ERP por Barra', value: formatCurrency(cardStats.erpPerBar), icon: DollarSign },
-    { label: 'Custo Adicional por Barra', value: formatCurrency(cardStats.additionalPerBar), icon: Calculator },
-    { label: 'Custo Industrial Realista', value: formatCurrency(cardStats.realisticCost), icon: TrendingUp },
-    { label: 'Custo Industrial Realista por Barra', value: formatCurrency(cardStats.realisticCostPerBar), icon: TrendingUp },
-  ];
+  const order = orders.find((item) => item.id === orderId);
+  const formField = (label: string, value: string, onChange: (value: string) => void, type = 'text') => <label className="text-xs font-bold text-[#574335]">{label}<input type={type} value={value} onChange={(event) => onChange(event.target.value)} className={`${inputClass} mt-1`} /></label>;
 
-  return (
-    <div className="space-y-6 pb-12 animate-fadeIn">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-[#574335] font-bold">Gestão industrial</p>
-          <h1 className="text-3xl font-black text-[#1a1c1b] tracking-tight">Custos Industriais</h1>
-        </div>
-      </div>
+  return <div className="space-y-6 pb-12 animate-fadeIn">
+    <div><p className="text-xs uppercase tracking-[0.2em] text-[#574335] font-bold">Apuração integrada</p><h1 className="text-3xl font-black text-[#1a1c1b]">Custos Industriais</h1><p className="text-sm text-[#574335] mt-1">Cálculo baseado em OPs, materiais separados, roteiro, tempos e equipamentos.</p></div>
+    <div className="flex flex-wrap gap-2 border-b border-[#dec1af]/50 pb-3">{tabs.map(([id, label]) => <button key={id} onClick={() => setTab(id)} className={`px-3 py-2 rounded-lg text-xs font-bold ${tab === id ? 'bg-[#954a00] text-white' : 'bg-white text-[#574335] border border-[#dec1af]'}`}>{label}</button>)}</div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-        {summaryCards.map(({ label, value, icon: Icon }) => (
-          <div key={label} className="rounded-2xl border border-[#dec1af]/50 bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between gap-2 mb-3">
-              <span className="text-xs font-medium text-[#574335]">{label}</span>
-              <div className="rounded-full bg-[#fef3c7] p-2 text-[#954a00]">
-                <Icon className="h-4 w-4" />
-              </div>
-            </div>
-            <div className={`text-xl font-black ${label === 'Custo Industrial Realista por Barra' ? 'text-[#954a00] text-2xl' : 'text-[#1a1c1b]'}`}>
-              {value}
-            </div>
-          </div>
-        ))}
-      </div>
+    {tab === 'apuracao' && <section className="bg-white rounded-2xl border border-[#dec1af]/50 p-5 space-y-5"><div className="flex items-end gap-3"><label className="text-xs font-bold text-[#574335]">OP<select value={orderId} onChange={(event) => setOrderId(event.target.value)} className={`${inputClass} mt-1 min-w-72`}><option value="">Selecione uma OP</option>{orders.map((item) => <option key={item.id} value={item.id}>{item.opNumber} - {item.productName}</option>)}</select></label><button onClick={calculate} disabled={!order} className="px-4 py-2 bg-[#954a00] text-white rounded-xl text-xs font-bold disabled:bg-stone-300"><Calculator className="w-4 h-4 inline mr-1" />Apurar custo</button></div>{operation && <><div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">{[['Materiais', operation.materialCost], ['MOD', operation.directLaborCost], ['MOI', operation.indirectLaborCost], ['Energia', operation.energyCost], ['Manutenção', operation.maintenanceCost], ['Depreciação', operation.depreciationCost], ['Outros CIF', operation.otherIndirectCost], ['Custo industrial', operation.totalCost], ['Custo unitário', operation.unitCost]].map(([label, value]) => <div key={label as string} className="rounded-xl bg-[#f4f3f1] p-3"><span className="block text-xs text-[#574335]">{label}</span><strong className="text-lg">{formatCurrency(value as number)}</strong></div>)}</div><div className="grid grid-cols-2 gap-4 text-sm"><div className="p-3 rounded-xl bg-[#f4f3f1]">Quantidade embalagem: <b>{operation.finishedQuantity}</b></div><div className="p-3 rounded-xl bg-[#f4f3f1]">Rendimento: <b>{operation.yieldPercent.toFixed(2)}%</b> | Perda: <b>{operation.lossQuantity}</b></div></div><button onClick={() => order && onCloseOrder?.(order, { ...operation, status: 'FECHADO', closedAt: new Date().toISOString() })} disabled={!order || operation.finishedQuantity <= 0} className="px-4 py-2 bg-emerald-700 text-white rounded-xl text-xs font-bold disabled:bg-stone-300">Fechar OP e lançar produto acabado</button><table className="w-full text-xs"><thead className="bg-[#f4f3f1]"><tr><th className="p-3 text-left">Etapa</th><th className="p-3 text-right">Horas</th><th className="p-3 text-right">MOD</th><th className="p-3 text-right">Equipamento</th><th className="p-3 text-right">Total</th></tr></thead><tbody>{operation.steps.map((item) => <tr key={item.id} className="border-b border-[#e9e8e6]"><td className="p-3">{steps.find((step) => step.id === item.stepId)?.title || item.stepId}</td><td className="p-3 text-right">{item.durationHours.toFixed(2)}</td><td className="p-3 text-right">{formatCurrency(item.laborCost)}</td><td className="p-3 text-right">{formatCurrency(item.equipmentCost)}</td><td className="p-3 text-right font-bold">{formatCurrency(item.totalCost)}</td></tr>)}</tbody></table></>}</section>}
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-6">
-        <section className="rounded-2xl border border-[#dec1af]/50 bg-white p-5 shadow-sm">
-          <div className="mb-5 flex items-center justify-between">
-            <h2 className="text-xl font-bold text-[#1a1c1b]">Período</h2>
-            <button onClick={handleReset} className="text-xs font-bold text-[#954a00] underline">Limpar formulário</button>
-          </div>
+    {tab === 'ops' && <section className="bg-white rounded-2xl border border-[#dec1af]/50 p-5"><h2 className="font-bold text-lg">Ordens para apuração</h2><div className="mt-4 space-y-2">{orders.map((item) => <div key={item.id} className="flex justify-between items-center p-3 rounded-lg bg-[#f4f3f1] text-xs"><span><b>{item.opNumber}</b> - {item.productName}</span><button onClick={() => { setOrderId(item.id); setTab('apuracao'); }} className="text-[#954a00] font-bold">APURAR CUSTO</button></div>)}</div></section>}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <label className="space-y-2 text-sm text-[#1a1c1b]">
-              <span className="font-medium">Ano</span>
-              <input
-                type="number"
-                value={form.year}
-                onChange={(event) => setForm((prev) => ({ ...prev, year: Number(event.target.value) }))}
-                className="w-full rounded-xl border border-[#dec1af] bg-[#faf9f7] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#954a00]/20"
-                min={2024}
-              />
-            </label>
+    {tab === 'colaboradores' && <section className="bg-white rounded-2xl border border-[#dec1af]/50 p-5"><h2 className="font-bold text-lg">Colaboradores</h2><form onSubmit={saveEmployee} className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">{formField('Código', employee.code, (value) => setEmployee({ ...employee, code: value }));}{formField('Nome', employee.name, (value) => setEmployee({ ...employee, name: value }));}{formField('Cargo', employee.role, (value) => setEmployee({ ...employee, role: value }));}{formField('Setor', employee.sector, (value) => setEmployee({ ...employee, sector: value }));}{formField('Salário', employee.salary, (value) => setEmployee({ ...employee, salary: value }), 'number')}{formField('Encargos %', employee.charges, (value) => setEmployee({ ...employee, charges: value }), 'number')}{formField('Horas produtivas', employee.hours, (value) => setEmployee({ ...employee, hours: value }), 'number')}<button className="self-end px-3 py-2 bg-[#954a00] text-white rounded-xl font-bold"><Plus className="w-4 h-4 inline mr-1" />Cadastrar</button></form><div className="mt-5 space-y-2">{employees.map((item) => <div key={item.id} className="flex justify-between p-3 rounded-lg bg-[#f4f3f1] text-xs">{item.code} - {item.name} ({item.laborType}) <b>{formatCurrency(item.hourlyCost)}/h</b></div>)}</div></section>}
 
-            <label className="space-y-2 text-sm text-[#1a1c1b]">
-              <span className="font-medium">Mês</span>
-              <select
-                value={form.month}
-                onChange={(event) => setForm((prev) => ({ ...prev, month: Number(event.target.value) }))}
-                className="w-full rounded-xl border border-[#dec1af] bg-[#faf9f7] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#954a00]/20"
-              >
-                <option value="">Selecione</option>
-                {INDUSTRIAL_COST_MONTHS.map((monthName, index) => (
-                  <option key={monthName} value={index + 1}>{monthName}</option>
-                ))}
-              </select>
-            </label>
-          </div>
+    {tab === 'encargos' && <section className="bg-white rounded-2xl border border-[#dec1af]/50 p-5"><h2 className="font-bold text-lg">Encargos</h2><form onSubmit={saveCharge} className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">{formField('Código', charge.code, (value) => setCharge({ ...charge, code: value }));}{formField('Descrição', charge.description, (value) => setCharge({ ...charge, description: value }));}{formField('Percentual', charge.percent, (value) => setCharge({ ...charge, percent: value }), 'number')}<button className="self-end px-3 py-2 bg-[#954a00] text-white rounded-xl font-bold"><Plus className="w-4 h-4 inline mr-1" />Cadastrar</button></form><div className="mt-5 space-y-2">{charges.map((item) => <div key={item.id} className="p-3 rounded-lg bg-[#f4f3f1] text-xs">{item.code} - {item.description}: <b>{item.percent}%</b></div>)}</div></section>}
 
-          <div className="mt-6 space-y-4">
-            <h3 className="text-lg font-bold text-[#1a1c1b]">Custos Industriais Adicionais</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <label className="space-y-2 text-sm text-[#1a1c1b]">
-                <span className="font-medium">Utilidades</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={form.utilities}
-                  onChange={(event) => setForm((prev) => ({ ...prev, utilities: Number(event.target.value) }))}
-                  className="w-full rounded-xl border border-[#dec1af] bg-[#faf9f7] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#954a00]/20"
-                />
-              </label>
+    {tab === 'equipamentos' && <section className="bg-white rounded-2xl border border-[#dec1af]/50 p-5"><h2 className="font-bold text-lg">Equipamentos</h2><div className="mt-4 space-y-2">{equipment.map((item) => <div key={item.id} className="flex justify-between p-3 rounded-lg bg-[#f4f3f1] text-xs"><span>{item.code} - {item.name}</span><span>{item.powerKw || 0} kW | tarifa {formatCurrency(item.energyTariff || 0)}</span></div>)}</div></section>}
 
-              <label className="space-y-2 text-sm text-[#1a1c1b]">
-                <span className="font-medium">Consumíveis</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={form.consumables}
-                  onChange={(event) => setForm((prev) => ({ ...prev, consumables: Number(event.target.value) }))}
-                  className="w-full rounded-xl border border-[#dec1af] bg-[#faf9f7] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#954a00]/20"
-                />
-              </label>
-            </div>
+    {tab === 'depreciacao' && <section className="bg-white rounded-2xl border border-[#dec1af]/50 p-5"><h2 className="font-bold text-lg">Depreciação</h2><div className="mt-4 space-y-2">{equipment.map((item) => <div key={item.id} className="p-3 rounded-lg bg-[#f4f3f1] text-xs">{item.name}: aquisição {formatCurrency(item.acquisitionCost)}, residual {formatCurrency(item.residualValue)}, vida útil {item.estimatedUsefulLife} anos</div>)}</div></section>}
 
-            <div className="rounded-xl bg-[#f6f1ea] p-3 text-sm text-[#1a1c1b]">
-              <span className="font-bold">Total de Custos Adicionais:</span>{' '}
-              <span className="font-black text-[#954a00]">{formatCurrency(currentSnapshot.totalAdditionalCost)}</span>
-            </div>
-          </div>
+    {tab === 'manutencao' && <section className="bg-white rounded-2xl border border-[#dec1af]/50 p-5"><h2 className="font-bold text-lg">Manutenção</h2><form onSubmit={saveMaintenance} className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4"><select className={inputClass} value={maintenanceForm.equipmentId} onChange={(event) => setMaintenanceForm({ ...maintenanceForm, equipmentId: event.target.value })}>{equipment.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>{formField('Tipo', maintenanceForm.type, (value) => setMaintenanceForm({ ...maintenanceForm, type: value }))}{formField('Data', maintenanceForm.date, (value) => setMaintenanceForm({ ...maintenanceForm, date: value }), 'date')}{formField('Valor', maintenanceForm.amount, (value) => setMaintenanceForm({ ...maintenanceForm, amount: value }), 'number')}<button className="self-end px-3 py-2 bg-[#954a00] text-white rounded-xl font-bold"><Plus className="w-4 h-4 inline mr-1" />Cadastrar</button></form><div className="mt-5 space-y-2">{maintenance.map((item) => <div key={item.id} className="p-3 rounded-lg bg-[#f4f3f1] text-xs">{item.maintenanceDate}: {formatCurrency(item.amount)}</div>)}</div></section>}
 
-          <div className="mt-6 space-y-4">
-            <h3 className="text-lg font-bold text-[#1a1c1b]">Dados de Produção</h3>
-            <label className="space-y-2 text-sm text-[#1a1c1b]">
-              <span className="font-medium">Quantidade produzida de barras</span>
-              <input
-                type="number"
-                step="1"
-                min="1"
-                value={form.productionQuantity}
-                onChange={(event) => setForm((prev) => ({ ...prev, productionQuantity: Number(event.target.value) }))}
-                className="w-full rounded-xl border border-[#dec1af] bg-[#faf9f7] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#954a00]/20"
-              />
-            </label>
-            <div className="rounded-xl bg-[#f4f3f1] p-3 text-sm text-[#1a1c1b]">
-              <span className="font-bold">Custo Adicional por Barra:</span>{' '}
-              <span className="font-black text-[#954a00]">{formatBarValue(currentSnapshot.additionalCostPerBar)}</span>
-            </div>
-          </div>
-
-          <div className="mt-6 space-y-4">
-            <h3 className="text-lg font-bold text-[#1a1c1b]">Dados do ERP</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <label className="space-y-2 text-sm text-[#1a1c1b]">
-                <span className="font-medium">Custo total do ERP</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={form.erpTotalCost}
-                  onChange={(event) => setForm((prev) => ({ ...prev, erpTotalCost: Number(event.target.value) }))}
-                  className="w-full rounded-xl border border-[#dec1af] bg-[#faf9f7] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#954a00]/20"
-                />
-              </label>
-
-              <label className="space-y-2 text-sm text-[#1a1c1b]">
-                <span className="font-medium">Quantidade produzida</span>
-                <input
-                  type="number"
-                  step="1"
-                  value={form.productionQuantity}
-                  readOnly
-                  className="w-full rounded-xl border border-[#dec1af] bg-[#f0efe9] px-3 py-2.5 text-sm text-[#574335]"
-                />
-              </label>
-
-              <label className="space-y-2 text-sm text-[#1a1c1b]">
-                <span className="font-medium">Custo do ERP por barra</span>
-                <input
-                  type="text"
-                  value={formatCurrency(form.productionQuantity > 0 ? form.erpTotalCost / form.productionQuantity : 0)}
-                  readOnly
-                  className="w-full rounded-xl border border-[#dec1af] bg-[#f0efe9] px-3 py-2.5 text-sm text-[#574335]"
-                />
-              </label>
-            </div>
-          </div>
-
-          <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-            <h3 className="text-lg font-bold text-[#1a1c1b]">Cálculo do Custo Industrial Realista</h3>
-            <div className="mt-3 flex flex-col gap-2 text-sm text-[#1a1c1b]">
-              <div className="flex items-center justify-between rounded-xl bg-white px-3 py-2">
-                <span>Custo do ERP</span>
-                <span className="font-bold">{formatCurrency(form.erpTotalCost)}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-xl bg-white px-3 py-2">
-                <span>Custos Industriais Adicionais</span>
-                <span className="font-bold">{formatCurrency(currentSnapshot.totalAdditionalCost)}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-xl bg-[#954a00] px-3 py-2 text-white">
-                <span>Custo Industrial Realista</span>
-                <span className="font-black">{formatCurrency(currentSnapshot.realisticCost)}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-6 space-y-2">
-            <h3 className="text-lg font-bold text-[#1a1c1b]">Observações</h3>
-            <textarea
-              value={form.notes}
-              onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
-              rows={4}
-              className="w-full rounded-xl border border-[#dec1af] bg-[#faf9f7] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#954a00]/20"
-              placeholder="Descreva observações relevantes sobre este mês de custo..."
-            />
-          </div>
-
-          {validationError && (
-            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 font-medium">
-              {validationError}
-            </div>
-          )}
-
-          <div className="mt-6 flex flex-wrap gap-3">
-            <button
-              onClick={saveRecord}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#954a00] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#7a3b00]"
-            >
-              <CheckCircle2 className="h-4 w-4" />
-              {isEditing ? 'Salvar alterações' : 'Salvar cadastro'}
-            </button>
-            <button
-              onClick={handleReset}
-              className="inline-flex items-center gap-2 rounded-xl border border-[#dec1af] bg-white px-4 py-2.5 text-sm font-bold text-[#1a1c1b] hover:bg-[#f4f3f1]"
-            >
-              <Plus className="h-4 w-4" />
-              Novo cadastro
-            </button>
-          </div>
-        </section>
-
-        <aside className="rounded-2xl border border-[#dec1af]/50 bg-white p-5 shadow-sm">
-          <h2 className="text-xl font-bold text-[#1a1c1b]">Resultado</h2>
-          <div className="mt-5 rounded-2xl bg-[#1a1c1b] p-5 text-white shadow-lg">
-            <p className="text-xs uppercase tracking-[0.16em] text-amber-300">Custo Industrial Realista por Barra</p>
-            <div className="mt-3 text-3xl font-black text-amber-300">{formatCurrency(currentSnapshot.realisticCostPerBar)}</div>
-          </div>
-
-          <div className="mt-5 space-y-3 text-sm text-[#1a1c1b]">
-            <div className="rounded-xl bg-[#f4f3f1] p-3 flex items-center justify-between">
-              <span>Custo do ERP por Barra</span>
-              <span className="font-bold">{formatCurrency(form.productionQuantity > 0 ? form.erpTotalCost / form.productionQuantity : 0)}</span>
-            </div>
-            <div className="rounded-xl bg-[#f4f3f1] p-3 flex items-center justify-between">
-              <span>Custo Adicional por Barra</span>
-              <span className="font-bold">{formatCurrency(currentSnapshot.additionalCostPerBar)}</span>
-            </div>
-          </div>
-        </aside>
-      </div>
-
-      <section className="rounded-2xl border border-[#dec1af]/50 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h2 className="text-xl font-bold text-[#1a1c1b]">Histórico de Custos</h2>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <label className="text-sm text-[#1a1c1b]">
-              <span className="mb-1 block font-medium">Ano</span>
-              <select value={filterYear} onChange={(event) => setFilterYear(Number(event.target.value))} className="w-full rounded-xl border border-[#dec1af] bg-[#faf9f7] px-3 py-2.5 text-sm">
-                <option value="">Todos</option>
-                {[currentYear - 1, currentYear, currentYear + 1].map((year) => (
-                  <option key={year} value={year}>{year}</option>
-                ))}
-              </select>
-            </label>
-            <label className="text-sm text-[#1a1c1b]">
-              <span className="mb-1 block font-medium">Mês</span>
-              <select value={filterMonth} onChange={(event) => setFilterMonth(event.target.value)} className="w-full rounded-xl border border-[#dec1af] bg-[#faf9f7] px-3 py-2.5 text-sm">
-                <option value="">Todos</option>
-                {INDUSTRIAL_COST_MONTHS.map((monthName, index) => (
-                  <option key={monthName} value={String(index + 1)}>{monthName}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-        </div>
-
-        <div className="mt-5 overflow-x-auto">
-          <table className="min-w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-[#dec1af]/40 bg-[#f4f3f1] text-[#574335]">
-                <th className="px-3 py-3 font-semibold">Ano</th>
-                <th className="px-3 py-3 font-semibold">Mês</th>
-                <th className="px-3 py-3 font-semibold">Quantidade Produzida</th>
-                <th className="px-3 py-3 font-semibold">Custo do ERP</th>
-                <th className="px-3 py-3 font-semibold">Utilidades</th>
-                <th className="px-3 py-3 font-semibold">Consumíveis</th>
-                <th className="px-3 py-3 font-semibold">Total de Custos Adicionais</th>
-                <th className="px-3 py-3 font-semibold">Custo Industrial Realista</th>
-                <th className="px-3 py-3 font-semibold">Custo Industrial Realista por Barra</th>
-                <th className="px-3 py-3 font-semibold text-right">Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredRecords.length === 0 ? (
-                <tr>
-                  <td colSpan={10} className="px-3 py-10 text-center text-[#574335]">
-                    Nenhum custo cadastrado para este filtro.
-                  </td>
-                </tr>
-              ) : (
-                filteredRecords.map((record) => {
-                  const snapshot = calculateIndustrialCostSnapshot(record);
-                  return (
-                    <tr key={record.id} className="border-b border-[#e9e8e6] align-top">
-                      <td className="px-3 py-3">{record.year}</td>
-                      <td className="px-3 py-3">{INDUSTRIAL_COST_MONTHS[(record.month - 1) % INDUSTRIAL_COST_MONTHS.length]}</td>
-                      <td className="px-3 py-3">{new Intl.NumberFormat('pt-BR').format(record.productionQuantity)}</td>
-                      <td className="px-3 py-3">{formatCurrency(record.erpTotalCost)}</td>
-                      <td className="px-3 py-3">{formatCurrency(record.utilities)}</td>
-                      <td className="px-3 py-3">{formatCurrency(record.consumables)}</td>
-                      <td className="px-3 py-3">{formatCurrency(snapshot.totalAdditionalCost)}</td>
-                      <td className="px-3 py-3">{formatCurrency(snapshot.realisticCost)}</td>
-                      <td className="px-3 py-3 font-bold text-[#954a00]">{formatCurrency(snapshot.realisticCostPerBar)}</td>
-                      <td className="px-3 py-3">
-                        <div className="flex items-center justify-end gap-2">
-                          <button onClick={() => handleEdit(record)} className="rounded-lg border border-[#dec1af] bg-white p-2 text-[#954a00] hover:bg-[#f4f3f1]" title="Editar">
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                          <button onClick={() => handleDuplicate(record)} className="rounded-lg border border-[#dec1af] bg-white p-2 text-[#1a1c1b] hover:bg-[#f4f3f1]" title="Duplicar">
-                            <Copy className="h-4 w-4" />
-                          </button>
-                          <button onClick={() => handleDelete(record.id)} className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-600 hover:bg-red-100" title="Excluir">
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
-  );
-};
+    {tab === 'indiretos' && <section className="bg-white rounded-2xl border border-[#dec1af]/50 p-5"><h2 className="font-bold text-lg">Custos Indiretos</h2><form onSubmit={saveIndirect} className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4">{formField('Código', indirect.code, (value) => setIndirect({ ...indirect, code: value }));}{formField('Descrição', indirect.description, (value) => setIndirect({ ...indirect, description: value }));}{formField('Categoria', indirect.category, (value) => setIndirect({ ...indirect, category: value }));}{formField('Valor', indirect.amount, (value) => setIndirect({ ...indirect, amount: value }), 'number')}<button className="self-end px-3 py-2 bg-[#954a00] text-white rounded-xl font-bold"><Plus className="w-4 h-4 inline mr-1" />Cadastrar</button></form><div className="mt-5 space-y-2">{indirectCosts.map((item) => <div key={item.id} className="p-3 rounded-lg bg-[#f4f3f1] text-xs">{item.code} - {item.description}: <b>{formatCurrency(item.amount)}</b></div>)}</div></section>}
++  </div>;
++};
+*** End Patch

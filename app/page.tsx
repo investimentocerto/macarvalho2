@@ -396,6 +396,27 @@ export default function MaCarvalhoApp() {
     dbService.saveProductionMaterialSeparation(separation).catch(() => showNotification('Erro ao salvar separação no banco.'));
   };
 
+  const handleCloseProductionOrder = async (order: ProductionOrder, operation: import('@/lib/types').CostOperation) => {
+    const product = products.find((item) => item.id === order.productId);
+    if (!product || operation.finishedQuantity <= 0) {
+      showNotification('A OP precisa de produto e quantidade válida na etapa de embalagem.');
+      return;
+    }
+    const savedEntry = await dbService.createFinishedProductEntryIfMissing(order, product, operation.finishedQuantity, operation.unitCost);
+    if (!savedEntry.success) {
+      showNotification('Não foi possível lançar o produto acabado no estoque.');
+      return;
+    }
+    const updatedOrder = { ...order, status: 'Concluída' as const, progress: 100, producedQuantity: operation.finishedQuantity, productionEnd: new Date().toISOString() };
+    if (savedEntry.created) {
+      setProducts((prev) => prev.map((item) => item.id === product.id ? { ...item, stock: item.stock + operation.finishedQuantity } : item));
+      setSelectedProduct((current) => current && current.id === product.id ? { ...current, stock: current.stock + operation.finishedQuantity } : current);
+    }
+    handleUpdateProductionOrder(updatedOrder);
+    dbService.saveCostOperation(operation).catch(() => {});
+    showNotification(`OP ${order.opNumber} fechada e entrada de ${operation.finishedQuantity} ${product.unit} registrada.`);
+  };
+
   // Handler: Navigate to BOM from a selected product
   const handleNavigateToBOM = (prod?: Product) => {
     if (prod) {
@@ -508,7 +529,18 @@ export default function MaCarvalhoApp() {
           )}
 
           {currentView === 'custos-industriais' && (
-            <IndustrialCostsView onNotify={showNotification} />
+            <IndustrialCostsView
+              products={products}
+              orders={productionOrders}
+              entries={productionEntries}
+              steps={processSteps}
+              separations={materialSeparations}
+              inventory={inventoryItems}
+              equipment={equipment}
+              processes={productionProcesses}
+              onCloseOrder={handleCloseProductionOrder}
+              onNotify={showNotification}
+            />
           )}
 
           {/* Operational Views (Ordens de Produção, Compras, Vendas) */}

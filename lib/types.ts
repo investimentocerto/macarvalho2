@@ -95,6 +95,12 @@ export interface StockMovement {
   quantity: number;
   unit: string;
   timestamp: string;
+  productionOrderId?: string;
+  productId?: string;
+  sourceType?: string;
+  sourceId?: string;
+  unitCost?: number;
+  totalCost?: number;
 }
 
 export interface ProductionOrder {
@@ -123,6 +129,7 @@ export interface ProductionEntry {
   startedAt?: string;
   endedAt?: string;
   entryDate: string;
+  employeeId?: string;
 }
 
 export interface ProductionMaterialSeparation {
@@ -131,6 +138,9 @@ export interface ProductionMaterialSeparation {
   inventoryItemId: string;
   quantity: number;
   separatedAt: string;
+  unitCostSnapshot?: number;
+  totalCost?: number;
+  competenceDate?: string;
 }
 
 export interface Equipment {
@@ -141,7 +151,128 @@ export interface Equipment {
   acquisitionCost: number;
   residualValue: number;
   estimatedUsefulLife: number;
+  powerKw?: number;
+  energyTariff?: number;
+  maintenanceCostPerHour?: number;
+  otherCostPerHour?: number;
+  productiveHoursAvailable?: number;
   createdAt?: string;
+}
+
+export type CostLaborType = 'DIRETA' | 'INDIRETA';
+export type CostApportionmentStatus = 'NAO_APURADO' | 'EM_CALCULO' | 'APURADO' | 'FECHADO' | 'REABERTO';
+
+export interface CostEmployee {
+  id: string;
+  code: string;
+  name: string;
+  role: string;
+  sector: string;
+  processId?: string;
+  laborType: CostLaborType;
+  baseSalary: number;
+  additions: number;
+  benefits: number;
+  chargePercent: number;
+  monthlyHours: number;
+  productiveHours: number;
+  hourlyCost: number;
+  validFrom?: string;
+  validUntil?: string;
+  active: boolean;
+}
+
+export interface CostCharge {
+  id: string;
+  code: string;
+  description: string;
+  percent: number;
+  chargeType: string;
+  validFrom?: string;
+  validUntil?: string;
+  active: boolean;
+}
+
+export interface CostDriver {
+  id: string;
+  code: string;
+  description: string;
+  driverType: string;
+  unit: string;
+  active: boolean;
+}
+
+export interface IndirectCost {
+  id: string;
+  code: string;
+  description: string;
+  category: string;
+  processId?: string;
+  amount: number;
+  competence: string;
+  classification: 'FIXO' | 'VARIAVEL';
+  driverId?: string;
+  observation: string;
+  active: boolean;
+}
+
+export interface EquipmentMaintenance {
+  id: string;
+  equipmentId: string;
+  processId?: string;
+  maintenanceType: string;
+  maintenanceDate: string;
+  amount: number;
+  supplier: string;
+  observation: string;
+}
+
+export interface CostOperationItem {
+  id: string;
+  category: string;
+  sourceId?: string;
+  description: string;
+  quantity: number;
+  unitCost: number;
+  amount: number;
+}
+
+export interface CostOperationStep {
+  id: string;
+  stepId: string;
+  durationHours: number;
+  manHours: number;
+  laborCost: number;
+  equipmentCost: number;
+  energyCost: number;
+  maintenanceCost: number;
+  depreciationCost: number;
+  totalCost: number;
+}
+
+export interface CostOperation {
+  id: string;
+  orderId: string;
+  status: CostApportionmentStatus;
+  plannedQuantity: number;
+  finishedQuantity: number;
+  yieldPercent: number;
+  lossQuantity: number;
+  materialCost: number;
+  directLaborCost: number;
+  indirectLaborCost: number;
+  energyCost: number;
+  maintenanceCost: number;
+  depreciationCost: number;
+  otherIndirectCost: number;
+  totalCost: number;
+  unitCost: number;
+  version: number;
+  recalculationReason: string;
+  calculatedAt?: string;
+  closedAt?: string;
+  items: CostOperationItem[];
+  steps: CostOperationStep[];
 }
 
 export interface SaleRecord {
