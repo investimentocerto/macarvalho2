@@ -128,7 +128,7 @@ export function calculateMaterialCost(
 export function calculateDurationHours(startedAt?: string, endedAt?: string): number {
   if (!startedAt || !endedAt) return 0;
   const parse = (value: string) => {
-    const [hours, minutes, seconds = '0'] = value.split(':').map(Number);
+    const [hours, minutes, seconds = 0]: number[] = value.split(':').map(Number);
     if (![hours, minutes, seconds].every(Number.isFinite) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) return null;
     return hours * 3600 + minutes * 60 + seconds;
   };
