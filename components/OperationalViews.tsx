@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { BOMComponent, InventoryItem, ProcessStepItem, Product, ProductionEntry, ProductionOrder, SaleRecord, StockMovement, ViewMode } from '@/lib/types';
+import { BOMComponent, InventoryItem, ProcessStepItem, Product, ProductionEntry, ProductionMaterialSeparation, ProductionOrder, SaleRecord, StockMovement, ViewMode } from '@/lib/types';
 import { 
   ClipboardList, 
   ShoppingCart, 
@@ -32,6 +32,8 @@ interface OperationalViewsProps {
   processSteps: ProcessStepItem[];
   productionEntries: ProductionEntry[];
   onAddProductionEntry: (entry: ProductionEntry) => void;
+  materialSeparations: ProductionMaterialSeparation[];
+  onAddMaterialSeparation: (separation: ProductionMaterialSeparation) => void;
   salesRecords: SaleRecord[];
   onAddProductionOrder?: (order: ProductionOrder) => void;
   onUpdateProductionOrder: (order: ProductionOrder) => void;
@@ -52,6 +54,8 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
   processSteps,
   productionEntries,
   onAddProductionEntry,
+  materialSeparations,
+  onAddMaterialSeparation,
   salesRecords,
   onAddProductionOrder,
   onUpdateProductionOrder,
@@ -67,6 +71,7 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
   const [isOpModalOpen, setIsOpModalOpen] = useState(false);
   const [isSaleModalOpen, setIsSaleModalOpen] = useState(false);
   const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
+  const [isSeparationConfirmOpen, setIsSeparationConfirmOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<ProductionOrder | null>(null);
 
   // New OP Form
@@ -152,19 +157,32 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
   const selectedBOM = selectedOrder
     ? bomComponents.map((component) => {
         const inventory = inventoryItems.find((item) => item.name.toLowerCase() === component.name.toLowerCase());
-        return { ...component, requiredQuantity: component.quantity * selectedOrder.quantity, stockBalance: inventory?.balance || 0, inventory };
+        const separation = materialSeparations.find((item) => item.orderId === selectedOrder.id && item.inventoryItemId === inventory?.id);
+        return { ...component, requiredQuantity: component.quantity * selectedOrder.quantity, stockBalance: inventory?.balance || 0, inventory, separation };
       })
     : [];
 
   const handleSeparateMaterials = () => {
     if (!selectedOrder) return;
-    const unavailable = selectedBOM.filter((item) => !item.inventory || item.stockBalance < item.requiredQuantity);
+    const pendingItems = selectedBOM.filter((item) => !item.separation);
+    if (pendingItems.length === 0) {
+      onNotify('Todos os itens desta OP já foram separados.');
+      return;
+    }
+    setIsSeparationConfirmOpen(true);
+  };
+
+  const confirmSeparateMaterials = () => {
+    if (!selectedOrder) return;
+    const pendingItems = selectedBOM.filter((item) => !item.separation);
+    const unavailable = pendingItems.filter((item) => !item.inventory || item.stockBalance < item.requiredQuantity);
     if (unavailable.length > 0) {
+      setIsSeparationConfirmOpen(false);
       onNotify(`Saldo insuficiente para: ${unavailable.map((item) => item.name).join(', ')}`);
       return;
     }
 
-    selectedBOM.forEach((item) => {
+    pendingItems.forEach((item) => {
       if (!item.inventory) return;
       const updated = { ...item.inventory, balance: item.inventory.balance - item.requiredQuantity };
       onUpdateInventoryItem(updated);
@@ -178,7 +196,15 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
         unit: item.unit,
         timestamp: new Date().toISOString(),
       });
+      onAddMaterialSeparation({
+        id: `separation-${selectedOrder.id}-${item.inventory.id}`,
+        orderId: selectedOrder.id,
+        inventoryItemId: item.inventory.id,
+        quantity: item.requiredQuantity,
+        separatedAt: new Date().toISOString(),
+      });
     });
+    setIsSeparationConfirmOpen(false);
     onNotify(`Materiais da OP ${selectedOrder.opNumber} separados e baixados do estoque.`);
   };
 
@@ -382,7 +408,20 @@ export const OperationalViews: React.FC<OperationalViewsProps> = ({
                 </form>
                 <div className="mt-4 space-y-1">{productionEntries.filter((entry) => entry.orderId === selectedOrder.id).map((entry) => <div key={entry.id} className="text-[11px] p-2 bg-[#f4f3f1] rounded-lg">{selectedRoute.find((step) => step.id === entry.stepId)?.title || 'Etapa'}: <b>{entry.quantityProduced}</b> un | {new Date(entry.entryDate).toLocaleDateString('pt-BR')}</div>)}</div>
               </div>
-              <div><div className="flex items-center justify-between mb-2"><h3 className="font-bold text-xs text-[#1a1c1b]">Folha de necessidade para separação</h3><button type="button" onClick={handleSeparateMaterials} className="px-3 py-1.5 bg-[#954a00] text-white rounded-lg text-[11px] font-bold">Separar itens</button></div><div className="border border-[#dec1af]/50 rounded-lg overflow-hidden"><table className="w-full text-xs"><thead className="bg-[#f4f3f1]"><tr><th className="text-left p-2">Insumo</th><th className="text-right p-2">Necessidade</th><th className="text-right p-2">Estoque</th><th className="text-right p-2">Un.</th></tr></thead><tbody className="divide-y divide-[#e9e8e6]">{selectedBOM.map((item) => <tr key={item.id}><td className="p-2 font-semibold">{item.name}</td><td className="p-2 text-right">{item.requiredQuantity.toFixed(2)}</td><td className={`p-2 text-right font-bold ${item.stockBalance < item.requiredQuantity ? 'text-red-600' : 'text-emerald-700'}`}>{item.stockBalance.toFixed(2)}</td><td className="p-2 text-right">{item.unit}</td></tr>)}</tbody></table></div></div>
+              <div><div className="flex items-center justify-between mb-2"><h3 className="font-bold text-xs text-[#1a1c1b]">Folha de necessidade para separação</h3><button type="button" onClick={handleSeparateMaterials} disabled={selectedBOM.length === 0 || selectedBOM.every((item) => Boolean(item.separation))} className="px-3 py-1.5 bg-[#954a00] text-white rounded-lg text-[11px] font-bold disabled:bg-stone-300 disabled:text-stone-500 disabled:cursor-not-allowed">{selectedBOM.length > 0 && selectedBOM.every((item) => Boolean(item.separation)) ? 'Itens separados' : 'Separar itens'}</button></div><div className="border border-[#dec1af]/50 rounded-lg overflow-hidden"><table className="w-full text-xs"><thead className="bg-[#f4f3f1]"><tr><th className="text-left p-2">Insumo</th><th className="text-right p-2">Necessidade</th><th className="text-right p-2">Estoque</th><th className="text-right p-2">Un.</th></tr></thead><tbody className="divide-y divide-[#e9e8e6]">{selectedBOM.map((item) => <tr key={item.id} className={item.separation ? 'bg-emerald-50 text-emerald-800' : ''}><td className="p-2 font-semibold">{item.name}{item.separation && <span className="ml-2 text-[10px] font-bold">Separado</span>}</td><td className="p-2 text-right">{item.requiredQuantity.toFixed(2)}</td><td className={`p-2 text-right font-bold ${item.separation ? 'text-emerald-700' : item.stockBalance < item.requiredQuantity ? 'text-red-600' : 'text-emerald-700'}`}>{item.stockBalance.toFixed(2)}</td><td className="p-2 text-right">{item.unit}</td></tr>)}</tbody></table></div></div>
+            </div>
+          </div>
+        )}
+
+        {isSeparationConfirmOpen && selectedOrder && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+            <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl border border-[#dec1af] p-5">
+              <h3 className="font-bold text-base text-[#1a1c1b]">Confirmar separação</h3>
+              <p className="text-sm text-[#574335] mt-2">Deseja realizar a separação.</p>
+              <div className="flex justify-end gap-2 mt-5">
+                <button type="button" onClick={() => setIsSeparationConfirmOpen(false)} className="px-4 py-2 bg-stone-100 text-[#574335] rounded-xl text-xs font-bold">Não</button>
+                <button type="button" onClick={confirmSeparateMaterials} className="px-4 py-2 bg-[#954a00] text-white rounded-xl text-xs font-bold">Sim</button>
+              </div>
             </div>
           </div>
         )}

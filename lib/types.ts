@@ -125,6 +125,14 @@ export interface ProductionEntry {
   entryDate: string;
 }
 
+export interface ProductionMaterialSeparation {
+  id: string;
+  orderId: string;
+  inventoryItemId: string;
+  quantity: number;
+  separatedAt: string;
+}
+
 export interface Equipment {
   id: string;
   code: string;

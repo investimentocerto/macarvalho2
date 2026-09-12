@@ -31,3 +31,22 @@ END $$;
 
 CREATE INDEX IF NOT EXISTS production_orders_product_id_idx ON public.production_orders(product_id);
 CREATE INDEX IF NOT EXISTS production_entries_order_id_idx ON public.production_entries(order_id);
+
+CREATE TABLE IF NOT EXISTS public.production_material_separations (
+    id TEXT PRIMARY KEY,
+    order_id TEXT NOT NULL REFERENCES public.production_orders(id) ON DELETE CASCADE,
+    inventory_item_id TEXT NOT NULL REFERENCES public.inventory_items(id) ON DELETE RESTRICT,
+    quantity NUMERIC NOT NULL DEFAULT 0,
+    separated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (order_id, inventory_item_id)
+);
+
+ALTER TABLE public.production_material_separations ENABLE ROW LEVEL SECURITY;
+DO $$
+BEGIN
+    DROP POLICY IF EXISTS "Public read/write access for production_material_separations" ON public.production_material_separations;
+    CREATE POLICY "Public read/write access for production_material_separations" ON public.production_material_separations FOR ALL USING (true) WITH CHECK (true);
+END $$;
+
+CREATE INDEX IF NOT EXISTS production_material_separations_order_idx ON public.production_material_separations(order_id);

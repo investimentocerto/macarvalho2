@@ -7,6 +7,7 @@ import {
   StockMovement, 
   ProductionOrder, 
   ProductionEntry,
+  ProductionMaterialSeparation,
   SaleRecord,
   ProductionProcess,
   Equipment
@@ -235,6 +236,37 @@ export const dbService = {
       ended_at: entry.endedAt,
       entry_date: entry.entryDate,
     });
+    return !error;
+  },
+
+  async fetchProductionMaterialSeparations(): Promise<ProductionMaterialSeparation[] | null> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return null;
+    const { data, error } = await supabase.from('production_material_separations').select('*');
+    if (error) {
+      console.warn('Erro ao carregar separações de materiais:', error.message);
+      return null;
+    }
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      orderId: row.order_id,
+      inventoryItemId: row.inventory_item_id,
+      quantity: Number(row.quantity || 0),
+      separatedAt: row.separated_at,
+    }));
+  },
+
+  async saveProductionMaterialSeparation(separation: ProductionMaterialSeparation): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return false;
+    const { error } = await supabase.from('production_material_separations').upsert({
+      id: separation.id,
+      order_id: separation.orderId,
+      inventory_item_id: separation.inventoryItemId,
+      quantity: separation.quantity,
+      separated_at: separation.separatedAt,
+    });
+    if (error) console.error('Erro ao salvar separação de material:', error.message);
     return !error;
   },
 

@@ -10,6 +10,7 @@ import {
   StockMovement, 
   ProductionOrder, 
   ProductionEntry,
+  ProductionMaterialSeparation,
   SaleRecord,
   ProductionProcess,
   Equipment
@@ -56,6 +57,7 @@ export default function MaCarvalhoApp() {
   const [stockMovements, setStockMovements] = useState<StockMovement[]>(INITIAL_MOVEMENTS);
   const [productionOrders, setProductionOrders] = useState<ProductionOrder[]>(INITIAL_PRODUCTION_ORDERS);
   const [productionEntries, setProductionEntries] = useState<ProductionEntry[]>([]);
+  const [materialSeparations, setMaterialSeparations] = useState<ProductionMaterialSeparation[]>([]);
   const [salesRecords, setSalesRecords] = useState<SaleRecord[]>(INITIAL_SALES);
 
   // Direct Image Modal State
@@ -91,7 +93,7 @@ export default function MaCarvalhoApp() {
 
     const loadRemoteData = async () => {
       try {
-        const [remoteProds, remoteInv, remoteOps, remoteSales, remoteBom, remoteSteps, remoteMovements, remoteProcs, remoteEquipment, remoteEntries] = await Promise.all([
+        const [remoteProds, remoteInv, remoteOps, remoteSales, remoteBom, remoteSteps, remoteMovements, remoteProcs, remoteEquipment, remoteEntries, remoteSeparations] = await Promise.all([
           dbService.fetchProducts(),
           dbService.fetchInventory(),
           dbService.fetchProductionOrders(),
@@ -102,6 +104,7 @@ export default function MaCarvalhoApp() {
           dbService.fetchProductionProcesses(),
           dbService.fetchEquipment(),
           dbService.fetchProductionEntries(),
+          dbService.fetchProductionMaterialSeparations(),
         ]);
 
         if (remoteProds && remoteProds.length > 0) {
@@ -117,6 +120,7 @@ export default function MaCarvalhoApp() {
         if (remoteProcs && remoteProcs.length > 0) setProductionProcesses(remoteProcs);
         if (remoteEquipment && remoteEquipment.length > 0) setEquipment(remoteEquipment);
         if (remoteEntries && remoteEntries.length > 0) setProductionEntries(remoteEntries);
+        if (remoteSeparations && remoteSeparations.length > 0) setMaterialSeparations(remoteSeparations);
 
         showNotification('Sincronizado com Supabase PostgreSQL!');
       } catch (err) {
@@ -387,6 +391,11 @@ export default function MaCarvalhoApp() {
     dbService.saveProductionEntry(entry).catch(() => showNotification('Erro ao salvar lançamento de produção no banco.'));
   };
 
+  const handleAddMaterialSeparation = (separation: ProductionMaterialSeparation) => {
+    setMaterialSeparations((prev) => [...prev, separation]);
+    dbService.saveProductionMaterialSeparation(separation).catch(() => showNotification('Erro ao salvar separação no banco.'));
+  };
+
   // Handler: Navigate to BOM from a selected product
   const handleNavigateToBOM = (prod?: Product) => {
     if (prod) {
@@ -514,6 +523,8 @@ export default function MaCarvalhoApp() {
               processSteps={processSteps}
               productionEntries={productionEntries}
               onAddProductionEntry={handleAddProductionEntry}
+              materialSeparations={materialSeparations}
+              onAddMaterialSeparation={handleAddMaterialSeparation}
               inventoryItems={inventoryItems}
               onUpdateInventoryItem={handleUpdateInventoryItem}
               onAddMovement={handleAddMovement}
