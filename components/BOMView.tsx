@@ -13,7 +13,6 @@ import {
   TrendingUp, 
   Trash2, 
   Pencil,
-  Calculator,
   ChevronDown, 
   ChevronUp, 
   CornerDownRight, 
@@ -23,7 +22,6 @@ import {
   Image as ImageIcon, 
   X,
   PackageCheck,
-  Users,
   AlertTriangle
 } from 'lucide-react';
 
@@ -83,9 +81,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
   const [editStepMachine, setEditStepMachine] = useState('');
   const [editStepLine, setEditStepLine] = useState('');
   const [editStepSelectedProcessId, setEditStepSelectedProcessId] = useState('');
-  const [editStepHourlyRate, setEditStepHourlyRate] = useState('45.00');
-  const [editStepLaborQty, setEditStepLaborQty] = useState('1');
-  const [editStepUnitsPerHour, setEditStepUnitsPerHour] = useState('20');
 
   // Delete Confirmation Modal State (Works reliably in iframes)
   const [deleteConfirm, setDeleteConfirm] = useState<{
@@ -108,9 +103,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
   const [newStepTitle, setNewStepTitle] = useState('');
   const [newStepMachine, setNewStepMachine] = useState('Bancada Artesanal');
   const [newStepLine, setNewStepLine] = useState('Linha Geral');
-  const [newStepHourlyRate, setNewStepHourlyRate] = useState('45.00');
-  const [newStepLaborQty, setNewStepLaborQty] = useState('1');
-  const [newStepUnitsPerHour, setNewStepUnitsPerHour] = useState('20');
 
   // Calculations
   const totalMaterialCost = components.reduce((acc, c) => acc + (c.totalCost || 0), 0);
@@ -258,9 +250,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
     setNewStepTitle('');
     setNewStepMachine('Bancada Artesanal');
     setNewStepLine('Linha Cosméticos');
-    setNewStepHourlyRate('45.00');
-    setNewStepLaborQty('1');
-    setNewStepUnitsPerHour('20');
     setIsAddStepModalOpen(true);
   };
 
@@ -268,36 +257,29 @@ export const BOMView: React.FC<BOMViewProps> = ({
     e.preventDefault();
     if (!newStepTitle) return;
 
-    const rate = parseFloat(newStepHourlyRate) || 0;
-    const laborQty = parseFloat(newStepLaborQty) || 1;
-    const unitsPerHour = parseFloat(newStepUnitsPerHour) || 1;
-    // Cálculo: (Valor Hora do Centro de Custo x Quantidade de Mão de Obra) / Produção por Hora
-    const calculatedCost = unitsPerHour > 0 ? ((rate * laborQty) / unitsPerHour) : 0;
-    const durationMin = unitsPerHour > 0 ? (60 / unitsPerHour) : 0;
-
     const nextStepNum = (processSteps.length + 1) * 10;
     const step: ProcessStepItem = {
       id: `proc-${Date.now()}`,
       stepNumber: nextStepNum,
       title: newStepTitle,
-      cost: calculatedCost,
+      cost: 0,
       machine: newStepMachine,
       line: newStepLine,
-      durationMinutes: Math.round(durationMin),
-      durationFormatted: `${durationMin.toFixed(1)} min/un`,
-      hourlyRateText: `R$ ${rate.toFixed(2).replace('.', ',')}/h × ${laborQty} MO (${unitsPerHour} un/h)`,
+      durationMinutes: 0,
+      durationFormatted: '',
+      hourlyRateText: '',
       processId: selectedProcessId || undefined,
       costCenterCode: newStepMachine,
-      hourlyRate: rate,
-      laborQuantity: laborQty,
-      unitsPerHour: unitsPerHour,
+      hourlyRate: 0,
+      laborQuantity: 0,
+      unitsPerHour: 0,
     };
 
     onAddProcessStep(step);
     setIsAddStepModalOpen(false);
     setSelectedProcessId('');
     setNewStepTitle('');
-    onNotify(`Etapa "${newStepTitle}" incluída no roteiro (Custo: R$ ${calculatedCost.toFixed(2).replace('.', ',')})!`);
+    onNotify(`Etapa "${newStepTitle}" incluída no roteiro!`);
   };
 
   const handleOpenEditStep = (step: ProcessStepItem) => {
@@ -306,9 +288,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
     setEditStepMachine(step.machine || '');
     setEditStepLine(step.line || 'Linha Cosméticos');
     setEditStepSelectedProcessId(step.processId || '');
-    setEditStepHourlyRate(step.hourlyRate ? step.hourlyRate.toString() : (step.cost > 0 && step.unitsPerHour ? (step.cost * step.unitsPerHour).toString() : '45.00'));
-    setEditStepLaborQty(step.laborQuantity ? step.laborQuantity.toString() : '1');
-    setEditStepUnitsPerHour(step.unitsPerHour ? step.unitsPerHour.toString() : '20');
     setIsEditStepModalOpen(true);
   };
 
@@ -316,27 +295,13 @@ export const BOMView: React.FC<BOMViewProps> = ({
     e.preventDefault();
     if (!editingStep || !editStepTitle) return;
 
-    const rate = parseFloat(editStepHourlyRate) || 0;
-    const laborQty = parseFloat(editStepLaborQty) || 1;
-    const unitsPerHour = parseFloat(editStepUnitsPerHour) || 1;
-    // Cálculo: (Valor Hora do Centro de Custo x Quantidade de Mão de Obra) / Produção por Hora
-    const calculatedCost = unitsPerHour > 0 ? ((rate * laborQty) / unitsPerHour) : 0;
-    const durationMin = unitsPerHour > 0 ? (60 / unitsPerHour) : 0;
-
     const updated: ProcessStepItem = {
       ...editingStep,
       title: editStepTitle,
-      cost: calculatedCost,
       machine: editStepMachine,
       line: editStepLine,
-      durationMinutes: Math.round(durationMin),
-      durationFormatted: `${durationMin.toFixed(1)} min/un`,
-      hourlyRateText: `R$ ${rate.toFixed(2).replace('.', ',')}/h × ${laborQty} MO (${unitsPerHour} un/h)`,
       processId: editStepSelectedProcessId || undefined,
       costCenterCode: editStepMachine,
-      hourlyRate: rate,
-      laborQuantity: laborQty,
-      unitsPerHour: unitsPerHour,
     };
 
     if (onUpdateProcessStep) {
@@ -650,7 +615,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
           <div className="p-4 flex justify-between items-center bg-[#f4f3f1] border-b border-[#dec1af]/30">
             <h2 className="font-bold text-sm text-[#1a1c1b] flex items-center gap-2">
               <Wrench className="w-5 h-5 text-[#954a00]" />
-              Roteiro de Produção Artesanal
+              Roteiro de Produção
             </h2>
             <button
               id="btn-add-process-step"
@@ -691,9 +656,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
                           </h3>
                         </div>
                         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                          <span className="text-xs font-bold text-[#954a00] bg-amber-100 px-2 py-0.5 rounded-md">
-                            R$ {step.cost.toFixed(2).replace('.', ',')}
-                          </span>
                           <button
                             onClick={() => handleOpenEditStep(step)}
                             className="p-1 text-[#574335] hover:text-[#954a00] hover:bg-white rounded transition-colors"
@@ -728,19 +690,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
                           <Factory className="w-3.5 h-3.5 text-[#954a00]" />
                           <span className="truncate">{step.line}</span>
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <Users className="w-3.5 h-3.5 text-[#954a00]" />
-                          <span className="truncate font-semibold text-[#1a1c1b]">{step.laborQuantity || 1} Mão de Obra</span>
-                        </div>
-                        <div className="flex items-center justify-between col-span-2 sm:col-span-3 pt-1.5 border-t border-[#dec1af]/30">
-                          <div className="flex items-center gap-1.5">
-                            <Clock className="w-3.5 h-3.5 text-[#954a00]" />
-                            <span className="font-bold text-[#1a1c1b]">{step.durationFormatted}</span>
-                          </div>
-                          <span className="text-[11px] text-[#574335] font-mono bg-white px-2 py-0.5 rounded border border-[#dec1af]/30">
-                            {step.hourlyRateText}
-                          </span>
-                        </div>
                       </div>
                     </div>
                   </div>
@@ -752,12 +701,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
           <div className="p-3 bg-[#f4f3f1] border-t border-[#dec1af]/40 flex justify-between items-center text-xs">
             <span className="text-[#574335]">
               Total de Etapas: <strong className="text-[#1a1c1b]">{processSteps.length}</strong>
-            </span>
-            <span className="text-[#574335]">
-              Custo Estimado:{' '}
-              <strong className="text-[#1a1c1b]">
-                R$ {totalProcessCost.toFixed(2).replace('.', ',')}
-              </strong>
             </span>
           </div>
         </section>
@@ -1129,11 +1072,10 @@ export const BOMView: React.FC<BOMViewProps> = ({
             </div>
 
             <form onSubmit={handleCreateStep} className="p-5 space-y-3.5 text-xs">
-              {/* Seleção do Processo / Centro de Custo Cadastrado */}
+              {/* Seleção do processo de fabricação */}
               <div>
                 <label className="block font-bold text-[#574335] mb-1 flex items-center justify-between">
-                  <span>Selecionar Centro de Custo / Processo Produtivo</span>
-                  <span className="text-[10px] text-[#954a00] font-normal">Preenche taxas e código automaticamente</span>
+                  <span>Processo de Fabricação</span>
                 </label>
                 <select
                   value={selectedProcessId}
@@ -1144,7 +1086,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
                     if (proc) {
                       setNewStepTitle(proc.description);
                       setNewStepMachine(proc.code);
-                      setNewStepHourlyRate(proc.hourlyRate.toString());
                     }
                   }}
                   className="w-full p-2.5 border border-[#dec1af] rounded-xl bg-white font-medium focus:ring-2 focus:ring-[#954a00]/20 focus:border-[#954a00]"
@@ -1152,7 +1093,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
                   <option value="">-- Selecione do Cadastro de Processos ou digite manualmente --</option>
                   {productionProcesses.map((proc) => (
                     <option key={proc.id} value={proc.id}>
-                      [{proc.code}] {proc.description} — R$ {proc.hourlyRate.toFixed(2).replace('.', ',')} / hora
+                      [{proc.code}] {proc.description}
                     </option>
                   ))}
                 </select>
@@ -1196,92 +1137,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
                 </div>
               </div>
 
-              {/* Centro de Custo: Valor Hora & Mão de Obra & Produção por Hora */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block font-bold text-[#574335] mb-1">
-                    Valor Hora Centro Custo (R$) *
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2.5 font-bold text-[#574335]">R$</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      required
-                      value={newStepHourlyRate}
-                      onChange={(e) => setNewStepHourlyRate(e.target.value)}
-                      className="w-full pl-9 pr-2 py-2.5 border border-[#dec1af] rounded-xl font-bold text-sm"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block font-bold text-[#574335] mb-1">
-                    Qtd. Mão de Obra *
-                  </label>
-                  <input
-                    type="number"
-                    step="0.5"
-                    min="0.5"
-                    required
-                    placeholder="Ex: 1"
-                    value={newStepLaborQty}
-                    onChange={(e) => setNewStepLaborQty(e.target.value)}
-                    className="w-full p-2.5 border border-[#dec1af] rounded-xl font-bold text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold text-[#574335] mb-1">
-                    Produção por Hora (un/h) *
-                  </label>
-                  <input
-                    type="number"
-                    step="1"
-                    min="1"
-                    required
-                    placeholder="Ex: 20"
-                    value={newStepUnitsPerHour}
-                    onChange={(e) => setNewStepUnitsPerHour(e.target.value)}
-                    className="w-full p-2.5 border border-[#dec1af] rounded-xl font-bold text-sm"
-                  />
-                </div>
-              </div>
-
-              {/* Cálculo Dinâmico do Custo da Etapa */}
-              {(() => {
-                const rate = parseFloat(newStepHourlyRate) || 0;
-                const labor = parseFloat(newStepLaborQty) || 1;
-                const units = parseFloat(newStepUnitsPerHour) || 1;
-                // Cálculo Automático: (Valor Hora do Centro de Custo x Quantidade de Mão de Obra) / Produção por Hora
-                const cost = units > 0 ? ((rate * labor) / units) : 0;
-                const minutesPerUnit = units > 0 ? 60 / units : 0;
-
-                return (
-                  <div className="p-3 bg-[#ffdcc6]/30 rounded-xl border border-[#dec1af]/60 space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-[#954a00] flex items-center gap-1.5">
-                        <Calculator className="w-3.5 h-3.5" />
-                        Cálculo Automático do Custo:
-                      </span>
-                      <span className="text-[11px] text-[#574335]">
-                        ~ {minutesPerUnit.toFixed(1)} min por unidade
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between bg-white p-2 rounded-lg border border-[#dec1af]/40">
-                      <span className="text-[#574335] text-xs">
-                        (R$ {rate.toFixed(2).replace('.', ',')}/h × {labor} MO) ÷ {units} un/h =
-                      </span>
-                      <span className="font-bold text-sm text-[#954a00]">
-                        R$ {cost.toFixed(2).replace('.', ',')} por unidade
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-[#574335]">
-                      Fórmula aplicada: <b>(Valor Hora do Centro de Custo × Quantidade de Mão de Obra) ÷ Produção por Hora</b>
-                    </p>
-                  </div>
-                );
-              })()}
-
               <div className="flex justify-end gap-2 pt-3 border-t border-[#dec1af]/30">
                 <button
                   type="button"
@@ -1316,11 +1171,10 @@ export const BOMView: React.FC<BOMViewProps> = ({
             </div>
 
             <form onSubmit={handleUpdateStepSubmit} className="p-5 space-y-3.5 text-xs">
-              {/* Seleção do Processo / Centro de Custo Cadastrado */}
+              {/* Seleção do processo de fabricação */}
               <div>
                 <label className="block font-bold text-[#574335] mb-1 flex items-center justify-between">
-                  <span>Selecionar Centro de Custo / Processo Produtivo</span>
-                  <span className="text-[10px] text-[#954a00] font-normal">Preenche dados do cadastro</span>
+                  <span>Processo de Fabricação</span>
                 </label>
                 <select
                   value={editStepSelectedProcessId}
@@ -1331,7 +1185,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
                     if (proc) {
                       setEditStepTitle(proc.description);
                       setEditStepMachine(proc.code);
-                      setEditStepHourlyRate(proc.hourlyRate.toString());
                     }
                   }}
                   className="w-full p-2.5 border border-[#dec1af] rounded-xl bg-white font-medium focus:ring-2 focus:ring-[#954a00]/20 focus:border-[#954a00]"
@@ -1339,7 +1192,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
                   <option value="">-- Manter dados atuais ou escolher do cadastro --</option>
                   {productionProcesses.map((proc) => (
                     <option key={proc.id} value={proc.id}>
-                      [{proc.code}] {proc.description} — R$ {proc.hourlyRate.toFixed(2).replace('.', ',')} / hora
+                      [{proc.code}] {proc.description}
                     </option>
                   ))}
                 </select>
@@ -1376,91 +1229,6 @@ export const BOMView: React.FC<BOMViewProps> = ({
                   />
                 </div>
               </div>
-
-              {/* Centro de Custo: Valor Hora & Mão de Obra & Produção por Hora */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block font-bold text-[#574335] mb-1">
-                    Valor Hora Centro Custo (R$) *
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2.5 font-bold text-[#574335]">R$</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      required
-                      value={editStepHourlyRate}
-                      onChange={(e) => setEditStepHourlyRate(e.target.value)}
-                      className="w-full pl-9 pr-2 py-2.5 border border-[#dec1af] rounded-xl font-bold text-sm"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block font-bold text-[#574335] mb-1">
-                    Qtd. Mão de Obra *
-                  </label>
-                  <input
-                    type="number"
-                    step="0.5"
-                    min="0.5"
-                    required
-                    placeholder="Ex: 1"
-                    value={editStepLaborQty}
-                    onChange={(e) => setEditStepLaborQty(e.target.value)}
-                    className="w-full p-2.5 border border-[#dec1af] rounded-xl font-bold text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold text-[#574335] mb-1">
-                    Produção por Hora (un/h) *
-                  </label>
-                  <input
-                    type="number"
-                    step="1"
-                    min="1"
-                    required
-                    value={editStepUnitsPerHour}
-                    onChange={(e) => setEditStepUnitsPerHour(e.target.value)}
-                    className="w-full p-2.5 border border-[#dec1af] rounded-xl font-bold text-sm"
-                  />
-                </div>
-              </div>
-
-              {/* Cálculo Dinâmico do Custo da Etapa */}
-              {(() => {
-                const rate = parseFloat(editStepHourlyRate) || 0;
-                const labor = parseFloat(editStepLaborQty) || 1;
-                const units = parseFloat(editStepUnitsPerHour) || 1;
-                // Cálculo Automático: (Valor Hora do Centro de Custo x Quantidade de Mão de Obra) / Produção por Hora
-                const cost = units > 0 ? ((rate * labor) / units) : 0;
-                const minutesPerUnit = units > 0 ? 60 / units : 0;
-
-                return (
-                  <div className="p-3 bg-[#ffdcc6]/30 rounded-xl border border-[#dec1af]/60 space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-[#954a00] flex items-center gap-1.5">
-                        <Calculator className="w-3.5 h-3.5" />
-                        Cálculo Automático do Custo:
-                      </span>
-                      <span className="text-[11px] text-[#574335]">
-                        ~ {minutesPerUnit.toFixed(1)} min por unidade
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between bg-white p-2 rounded-lg border border-[#dec1af]/40">
-                      <span className="text-[#574335] text-xs">
-                        (R$ {rate.toFixed(2).replace('.', ',')}/h × {labor} MO) ÷ {units} un/h =
-                      </span>
-                      <span className="font-bold text-sm text-[#954a00]">
-                        R$ {cost.toFixed(2).replace('.', ',')} por unidade
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-[#574335]">
-                      Fórmula aplicada: <b>(Valor Hora do Centro de Custo × Quantidade de Mão de Obra) ÷ Produção por Hora</b>
-                    </p>
-                  </div>
-                );
-              })()}
 
               <div className="flex items-center justify-between gap-2 pt-3 border-t border-[#dec1af]/30">
                 {editingStep && onRemoveProcessStep && (
