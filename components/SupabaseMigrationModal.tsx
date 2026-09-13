@@ -187,7 +187,108 @@ CREATE TABLE IF NOT EXISTS public.sales_records (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 8. Row Level Security & Políticas de Acesso
+-- 8. Custos Industriais, Mão de Obra e Rateio
+CREATE TABLE IF NOT EXISTS public.cost_sectors (
+    id TEXT PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    cost_center_id TEXT REFERENCES public.production_processes(id),
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.cost_charges (
+    id TEXT PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    percent NUMERIC NOT NULL DEFAULT 0,
+    charge_type TEXT NOT NULL DEFAULT 'ENCARGO',
+    valid_from DATE,
+    valid_until DATE,
+    active BOOLEAN NOT NULL DEFAULT true
+);
+
+CREATE TABLE IF NOT EXISTS public.cost_employees (
+    id TEXT PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    role TEXT,
+    sector TEXT,
+    sector_id TEXT REFERENCES public.cost_sectors(id),
+    process_id TEXT REFERENCES public.production_processes(id),
+    cost_center_id TEXT REFERENCES public.production_processes(id),
+    labor_type TEXT NOT NULL DEFAULT 'DIRETA',
+    base_salary NUMERIC NOT NULL DEFAULT 0,
+    additions NUMERIC DEFAULT 0,
+    benefits NUMERIC DEFAULT 0,
+    benefits_detail JSONB DEFAULT '[]'::jsonb,
+    charge_percent NUMERIC NOT NULL DEFAULT 0,
+    total_charges_amount NUMERIC DEFAULT 0,
+    total_monthly_cost NUMERIC DEFAULT 0,
+    charges_detail JSONB DEFAULT '[]'::jsonb,
+    selected_charge_ids JSONB DEFAULT '[]'::jsonb,
+    monthly_hours NUMERIC NOT NULL DEFAULT 220,
+    productive_hours NUMERIC NOT NULL DEFAULT 176,
+    hourly_cost NUMERIC NOT NULL DEFAULT 0,
+    valid_from DATE,
+    valid_until DATE,
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.cost_employee_charges (
+    id TEXT PRIMARY KEY,
+    employee_id TEXT NOT NULL REFERENCES public.cost_employees(id) ON DELETE CASCADE,
+    charge_id TEXT NOT NULL REFERENCES public.cost_charges(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.cost_employee_history (
+    id TEXT PRIMARY KEY,
+    employee_id TEXT NOT NULL REFERENCES public.cost_employees(id) ON DELETE CASCADE,
+    competence_date DATE NOT NULL,
+    base_salary NUMERIC NOT NULL,
+    benefits NUMERIC DEFAULT 0,
+    total_charges_amount NUMERIC NOT NULL,
+    total_monthly_cost NUMERIC NOT NULL,
+    productive_hours NUMERIC NOT NULL,
+    hourly_cost NUMERIC NOT NULL,
+    labor_type TEXT NOT NULL,
+    sector_id TEXT,
+    process_id TEXT,
+    charges_detail JSONB DEFAULT '[]'::jsonb,
+    benefits_detail JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 9. Apontamentos da OP e Mão de Obra Direta (MOD)
+CREATE TABLE IF NOT EXISTS public.production_entries (
+    id TEXT PRIMARY KEY,
+    order_id TEXT NOT NULL REFERENCES public.production_orders(id) ON DELETE CASCADE,
+    step_id TEXT NOT NULL REFERENCES public.process_steps(id) ON DELETE CASCADE,
+    quantity_produced NUMERIC NOT NULL DEFAULT 0,
+    started_at TIME,
+    ended_at TIME,
+    hours_worked NUMERIC DEFAULT 0,
+    entry_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    employee_id TEXT,
+    employee_name TEXT,
+    hourly_cost_snapshot NUMERIC DEFAULT 0,
+    mod_cost NUMERIC DEFAULT 0,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.production_entries ADD COLUMN IF NOT EXISTS employee_id TEXT;
+ALTER TABLE public.production_entries ADD COLUMN IF NOT EXISTS employee_name TEXT;
+ALTER TABLE public.production_entries ADD COLUMN IF NOT EXISTS hours_worked NUMERIC DEFAULT 0;
+ALTER TABLE public.production_entries ADD COLUMN IF NOT EXISTS hourly_cost_snapshot NUMERIC DEFAULT 0;
+ALTER TABLE public.production_entries ADD COLUMN IF NOT EXISTS mod_cost NUMERIC DEFAULT 0;
+ALTER TABLE public.production_entries ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE public.production_entries ENABLE ROW LEVEL SECURITY;
+
+-- 10. Row Level Security & Políticas de Acesso
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bom_components ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.process_steps ENABLE ROW LEVEL SECURITY;
@@ -197,6 +298,11 @@ ALTER TABLE public.production_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sales_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.production_processes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.equipment ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cost_sectors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cost_charges ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cost_employees ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cost_employee_charges ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cost_employee_history ENABLE ROW LEVEL SECURITY;
 
 DO $$
 BEGIN
@@ -226,6 +332,24 @@ BEGIN
 
     DROP POLICY IF EXISTS "Public access equipment" ON public.equipment;
     CREATE POLICY "Public access equipment" ON public.equipment FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public access cost_sectors" ON public.cost_sectors;
+    CREATE POLICY "Public access cost_sectors" ON public.cost_sectors FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public access cost_charges" ON public.cost_charges;
+    CREATE POLICY "Public access cost_charges" ON public.cost_charges FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public access cost_employees" ON public.cost_employees;
+    CREATE POLICY "Public access cost_employees" ON public.cost_employees FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public access cost_employee_charges" ON public.cost_employee_charges;
+    CREATE POLICY "Public access cost_employee_charges" ON public.cost_employee_charges FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public access cost_employee_history" ON public.cost_employee_history;
+    CREATE POLICY "Public access cost_employee_history" ON public.cost_employee_history FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public access production_entries" ON public.production_entries;
+    CREATE POLICY "Public access production_entries" ON public.production_entries FOR ALL USING (true) WITH CHECK (true);
 END $$;`;
 
   const handleCopy = () => {

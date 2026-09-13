@@ -13,7 +13,9 @@ import {
   ProductionMaterialSeparation,
   SaleRecord,
   ProductionProcess,
-  Equipment
+  Equipment,
+  CostEmployee,
+  CostCharge
 } from '@/lib/types';
 import { 
   INITIAL_PRODUCTS, 
@@ -59,6 +61,8 @@ export default function MaCarvalhoApp() {
   const [productionEntries, setProductionEntries] = useState<ProductionEntry[]>([]);
   const [materialSeparations, setMaterialSeparations] = useState<ProductionMaterialSeparation[]>([]);
   const [salesRecords, setSalesRecords] = useState<SaleRecord[]>(INITIAL_SALES);
+  const [costEmployees, setCostEmployees] = useState<CostEmployee[]>([]);
+  const [costCharges, setCostCharges] = useState<CostCharge[]>([]);
 
   // Direct Image Modal State
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
@@ -87,6 +91,12 @@ export default function MaCarvalhoApp() {
     });
     dbService.fetchEquipment().then((items) => {
       if (items && items.length > 0) setEquipment(items);
+    });
+    dbService.fetchCostEmployees().then((emps) => {
+      if (emps && emps.length > 0) setCostEmployees(emps);
+    });
+    dbService.fetchCostCharges().then((chgs) => {
+      if (chgs && chgs.length > 0) setCostCharges(chgs);
     });
 
     if (!isSupabaseConfigured()) return;
@@ -388,7 +398,13 @@ export default function MaCarvalhoApp() {
 
   const handleAddProductionEntry = (entry: ProductionEntry) => {
     setProductionEntries((prev) => [entry, ...prev]);
-    dbService.saveProductionEntry(entry).catch(() => showNotification('Erro ao salvar lançamento de produção no banco.'));
+    dbService.saveProductionEntry(entry).catch(() => showNotification('Erro ao salvar apontamento no banco.'));
+  };
+
+  const handleDeleteProductionEntry = (id: string) => {
+    setProductionEntries((prev) => prev.filter((entry) => entry.id !== id));
+    dbService.deleteProductionEntry(id).catch(() => showNotification('Erro ao excluir apontamento no banco.'));
+    showNotification('Apontamento de produção excluído com sucesso.');
   };
 
   const handleAddMaterialSeparation = (separation: ProductionMaterialSeparation) => {
@@ -555,6 +571,9 @@ export default function MaCarvalhoApp() {
               processSteps={processSteps}
               productionEntries={productionEntries}
               onAddProductionEntry={handleAddProductionEntry}
+              onDeleteProductionEntry={handleDeleteProductionEntry}
+              employees={costEmployees}
+              charges={costCharges}
               materialSeparations={materialSeparations}
               onAddMaterialSeparation={handleAddMaterialSeparation}
               inventoryItems={inventoryItems}

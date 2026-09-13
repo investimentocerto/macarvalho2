@@ -1,5 +1,9 @@
 import {
+  CostCharge,
+  CostDriverType,
   CostEmployee,
+  CostEmployeeChargeDetail,
+  CostMoiAllocation,
   CostOperation,
   CostOperationItem,
   CostOperationStep,
@@ -7,10 +11,12 @@ import {
   EquipmentMaintenance,
   IndirectCost,
   InventoryItem,
+  LaborCostBarSummary,
   ProcessStepItem,
   ProductionEntry,
   ProductionMaterialSeparation,
   ProductionOrder,
+  ProductionProcess,
 } from './types';
 
 export interface IndustrialCostRecord {
@@ -98,10 +104,104 @@ export function formatBarValue(value: number): string {
   return `${formatCurrency(value)} por barra`;
 }
 
-export function calculateEmployeeHourlyCost(employee: Pick<CostEmployee, 'baseSalary' | 'additions' | 'benefits' | 'chargePercent' | 'productiveHours'>): number {
-  const monthlyCost = employee.baseSalary + employee.additions + employee.benefits;
-  const withCharges = monthlyCost * (1 + employee.chargePercent / 100);
-  return employee.productiveHours > 0 ? withCharges / employee.productiveHours : 0;
+/**
+ * Calcula detalhadamente a composição de custo mensal do colaborador:
+ * Salário Base + Encargos Selecionados (do cadastro de encargos) + Benefícios = Custo Mensal Total
+ * Custo/Hora = Custo Mensal Total / Horas Produtivas
+ * NÃO permite percentual fixo arbitrário ou digitado manualmente.
+ */
+export function calculateEmployeeCostDetails(
+  employee: Partial<CostEmployee>,
+  allCharges: CostCharge[] = []
+): {
+  baseSalary: number;
+  totalBenefits: number;
+  totalChargesAmount: number;
+  totalMonthlyCost: number;
+  chargePercent: number;
+  hourlyCost: number;
+  chargesDetail: CostEmployeeChargeDetail[];
+} {
+  const baseSalary = Math.max(0, Number(employee.baseSalary) || 0);
+  const additions = Math.max(0, Number(employee.additions) || 0);
+  const productiveHours = Math.max(0, Number(employee.productiveHours) || 0);
+
+  // Benefícios: soma de itens detalhados ou campo numérico consolidado
+  let totalBenefits = 0;
+  if (employee.benefitsDetail && employee.benefitsDetail.length > 0) {
+    totalBenefits = employee.benefitsDetail.reduce((acc, b) => acc + Math.max(0, Number(b.amount) || 0), 0);
+  } else {
+    totalBenefits = Math.max(0, Number(employee.benefits) || 0);
+  }
+
+  // Base de cálculo dos encargos sobre a folha
+  const chargeBase = baseSalary + additions;
+
+  // Encargos selecionados pelo usuário a partir do cadastro oficial de encargos
+  const selectedIds = new Set(employee.selectedChargeIds || []);
+  const chargesDetail: CostEmployeeChargeDetail[] = [];
+  let totalChargesAmount = 0;
+
+  for (const charge of allCharges) {
+    const isSelected = selectedIds.has(charge.id) || (
+      // Se não houver selectedChargeIds explícito mas houver chargesDetail histórico
+      !employee.selectedChargeIds && employee.chargesDetail?.some((cd) => cd.chargeId === charge.id)
+    );
+
+    if (isSelected && charge.active) {
+      const percent = Math.max(0, Number(charge.percent) || 0);
+      const calculatedAmount = (chargeBase * percent) / 100;
+      totalChargesAmount += calculatedAmount;
+
+      chargesDetail.push({
+        chargeId: charge.id,
+        code: charge.code,
+        description: charge.description,
+        percent,
+        baseAmount: chargeBase,
+        calculatedAmount,
+        chargeType: charge.chargeType,
+      });
+    }
+  }
+
+  // Se o colaborador já possuía chargesDetail salvo diretamente (ex: vindo do banco/histórico)
+  if (chargesDetail.length === 0 && employee.chargesDetail && employee.chargesDetail.length > 0) {
+    for (const item of employee.chargesDetail) {
+      const calculatedAmount = Number(item.calculatedAmount) || (chargeBase * (Number(item.percent) || 0)) / 100;
+      totalChargesAmount += calculatedAmount;
+      chargesDetail.push({
+        ...item,
+        baseAmount: chargeBase,
+        calculatedAmount,
+      });
+    }
+  }
+
+  const chargePercent = chargeBase > 0 ? (totalChargesAmount / chargeBase) * 100 : 0;
+  const totalMonthlyCost = baseSalary + additions + totalChargesAmount + totalBenefits;
+  const hourlyCost = productiveHours > 0 ? totalMonthlyCost / productiveHours : 0;
+
+  return {
+    baseSalary,
+    totalBenefits,
+    totalChargesAmount,
+    totalMonthlyCost,
+    chargePercent,
+    hourlyCost,
+    chargesDetail,
+  };
+}
+
+export function calculateEmployeeHourlyCost(
+  employee: Pick<CostEmployee, 'baseSalary' | 'additions' | 'benefits' | 'chargePercent' | 'productiveHours'> & Partial<CostEmployee>,
+  allCharges?: CostCharge[]
+): number {
+  if (employee.hourlyCost && employee.hourlyCost > 0) {
+    return employee.hourlyCost;
+  }
+  const details = calculateEmployeeCostDetails(employee, allCharges || []);
+  return details.hourlyCost;
 }
 
 export function calculateMaterialCost(
@@ -139,56 +239,260 @@ export function calculateDurationHours(startedAt?: string, endedAt?: string): nu
   return elapsed > 0 ? elapsed / 3600 : 0;
 }
 
-export function calculateEquipmentDepreciation(equipment: Pick<Equipment, 'acquisitionCost' | 'residualValue' | 'estimatedUsefulLife' | 'productiveHoursAvailable'>, hours: number): number {
+export function calculateEquipmentDepreciation(
+  equipment: Pick<Equipment, 'acquisitionCost' | 'residualValue' | 'estimatedUsefulLife' | 'productiveHoursAvailable'>,
+  hours: number
+): number {
   const productiveHours = equipment.productiveHoursAvailable ?? 0;
   if (equipment.estimatedUsefulLife <= 0 || productiveHours <= 0 || hours <= 0) return 0;
   const monthly = Math.max(0, equipment.acquisitionCost - equipment.residualValue) / equipment.estimatedUsefulLife / 12;
-  return monthly / productiveHours * hours;
+  return (monthly / productiveHours) * hours;
 }
 
-export function calculateEnergyCost(equipment: Pick<Equipment, 'powerKw' | 'energyTariff'>, hours: number): number {
+export function calculateEnergyCost(
+  equipment: Pick<Equipment, 'powerKw' | 'energyTariff'>,
+  hours: number
+): number {
   return Math.max(0, equipment.powerKw || 0) * Math.max(0, equipment.energyTariff || 0) * Math.max(0, hours);
 }
 
-export function calculateMaintenanceCost(equipment: Pick<Equipment, 'maintenanceCostPerHour'>, hours: number): number {
+export function calculateMaintenanceCost(
+  equipment: Pick<Equipment, 'maintenanceCostPerHour'>,
+  hours: number
+): number {
   return Math.max(0, equipment.maintenanceCostPerHour || 0) * Math.max(0, hours);
 }
 
-export function calculateYield(plannedQuantity: number, finishedQuantity: number): { yieldPercent: number; lossQuantity: number } {
+export function calculateYield(
+  plannedQuantity: number,
+  finishedQuantity: number
+): { yieldPercent: number; lossQuantity: number } {
   const planned = Math.max(0, plannedQuantity);
   const finished = Math.max(0, finishedQuantity);
   return {
-    yieldPercent: planned > 0 ? finished / planned * 100 : 0,
+    yieldPercent: planned > 0 ? (finished / planned) * 100 : 0,
     lossQuantity: Math.max(0, planned - finished),
+  };
+}
+
+/**
+ * Apuração de Mão de Obra Indireta (MOI):
+ * 1. Agrupa os colaboradores indiretos (laborType === 'INDIRETA') por Centro de Custo (processId / costCenterId).
+ * 2. Soma o Custo Mensal Total de cada Centro de Custo.
+ * 3. Rateia para as OPs do período com base no direcionador configurável (padrão: HORAS_PRODUTIVAS).
+ */
+export function calculateMoiApportionment(
+  orders: ProductionOrder[],
+  allEntries: ProductionEntry[],
+  employees: CostEmployee[],
+  processes: ProductionProcess[],
+  driverType: CostDriverType = 'HORAS_PRODUTIVAS',
+  targetOrderId?: string
+): {
+  totalPeriodMoi: number;
+  allocations: CostMoiAllocation[];
+  orderAllocatedMoi: number;
+} {
+  const indirectEmployees = employees.filter((e) => e.laborType === 'INDIRETA' && e.active !== false);
+  if (indirectEmployees.length === 0) {
+    return { totalPeriodMoi: 0, allocations: [], orderAllocatedMoi: 0 };
+  }
+
+  // 1. Agrupamento por Centro de Custo
+  const costCenterMap = new Map<string, {
+    costCenterId: string;
+    costCenterCode: string;
+    costCenterName: string;
+    totalMoiCost: number;
+  }>();
+
+  for (const emp of indirectEmployees) {
+    const ccId = emp.costCenterId || emp.processId || 'cc-geral';
+    const proc = processes.find((p) => p.id === ccId);
+    const code = proc?.code || emp.costCenterCode || 'CC-GERAL';
+    const name = proc?.description || emp.sector || 'Apoio Geral / Indireto';
+
+    const empMonthlyCost = emp.totalMonthlyCost && emp.totalMonthlyCost > 0
+      ? emp.totalMonthlyCost
+      : (emp.baseSalary + emp.additions + emp.benefits) * (1 + (emp.chargePercent || 0) / 100);
+
+    const existing = costCenterMap.get(ccId) || {
+      costCenterId: ccId,
+      costCenterCode: code,
+      costCenterName: name,
+      totalMoiCost: 0,
+    };
+    existing.totalMoiCost += empMonthlyCost;
+    costCenterMap.set(ccId, existing);
+  }
+
+  // 2. Volumes do direcionador no período
+  // Calcular métricas por OP
+  const opMetrics = new Map<string, { hours: number; quantity: number }>();
+  let totalPeriodHours = 0;
+  let totalPeriodQuantity = 0;
+
+  for (const order of orders) {
+    const orderEntries = allEntries.filter((e) => e.orderId === order.id);
+    let hours = 0;
+    for (const ent of orderEntries) {
+      hours += calculateDurationHours(ent.startedAt, ent.endedAt);
+    }
+    // Fallback: se não houver tempo apontado, assume 1h mínima por OP para não zerar rateio
+    if (hours <= 0) hours = 1;
+
+    const quantity = Math.max(1, order.producedQuantity || order.quantity || 1);
+
+    opMetrics.set(order.id, { hours, quantity });
+    totalPeriodHours += hours;
+    totalPeriodQuantity += quantity;
+  }
+
+  if (totalPeriodHours <= 0) totalPeriodHours = 1;
+  if (totalPeriodQuantity <= 0) totalPeriodQuantity = 1;
+
+  // 3. Montar as alocações de MOI por Centro de Custo
+  const allocations: CostMoiAllocation[] = [];
+  let totalPeriodMoi = 0;
+  let orderAllocatedMoi = 0;
+
+  for (const cc of costCenterMap.values()) {
+    totalPeriodMoi += cc.totalMoiCost;
+
+    let totalDriverVolume = totalPeriodHours;
+    let driverUnit = 'Horas Produtivas (h)';
+    let opDriverVolume = targetOrderId ? (opMetrics.get(targetOrderId)?.hours || 0) : 0;
+
+    if (driverType === 'QUANTIDADE_PRODUZIDA') {
+      totalDriverVolume = totalPeriodQuantity;
+      driverUnit = 'Barras / Unidades';
+      opDriverVolume = targetOrderId ? (opMetrics.get(targetOrderId)?.quantity || 0) : 0;
+    } else if (driverType === 'QUANTIDADE_OPS') {
+      totalDriverVolume = Math.max(1, orders.length);
+      driverUnit = 'Ordens de Produção';
+      opDriverVolume = 1;
+    }
+
+    const ratePerUnit = totalDriverVolume > 0 ? cc.totalMoiCost / totalDriverVolume : 0;
+    const allocatedAmount = opDriverVolume * ratePerUnit;
+
+    if (targetOrderId) {
+      orderAllocatedMoi += allocatedAmount;
+    }
+
+    allocations.push({
+      costCenterId: cc.costCenterId,
+      costCenterCode: cc.costCenterCode,
+      costCenterName: cc.costCenterName,
+      totalMoiCost: cc.totalMoiCost,
+      driverType,
+      driverUnit,
+      totalDriverVolume,
+      ratePerUnit,
+      opDriverVolume,
+      allocatedAmount,
+    });
+  }
+
+  return { totalPeriodMoi, allocations, orderAllocatedMoi };
+}
+
+/**
+ * Indicador Gerencial Médio por Barra:
+ * (MOD total + MOI total) / quantidade de barras boas produzidas
+ */
+export function calculateLaborCostBarSummary(
+  directLaborTotal: number,
+  indirectLaborTotal: number,
+  goodBarsQuantity: number
+): LaborCostBarSummary {
+  const goodBars = Math.max(0, goodBarsQuantity);
+  const totalLaborCost = directLaborTotal + indirectLaborTotal;
+  const directLaborPerBar = goodBars > 0 ? directLaborTotal / goodBars : 0;
+  const indirectLaborPerBar = goodBars > 0 ? indirectLaborTotal / goodBars : 0;
+  const totalLaborPerBar = goodBars > 0 ? totalLaborCost / goodBars : 0;
+
+  return {
+    totalGoodBars: goodBars,
+    totalDirectLabor: directLaborTotal,
+    totalIndirectLabor: indirectLaborTotal,
+    totalLaborCost,
+    directLaborPerBar,
+    indirectLaborPerBar,
+    totalLaborPerBar,
   };
 }
 
 export interface ProductionCostInputs {
   order: ProductionOrder;
+  orders?: ProductionOrder[];
   entries: ProductionEntry[];
   steps: ProcessStepItem[];
   separations: ProductionMaterialSeparation[];
   inventory: InventoryItem[];
   employees: CostEmployee[];
   equipment: Equipment[];
+  processes?: ProductionProcess[];
+  charges?: CostCharge[];
   indirectCosts?: IndirectCost[];
   maintenance?: EquipmentMaintenance[];
+  moiDriver?: CostDriverType;
 }
 
 export function calculateProductionOrderCost(inputs: ProductionCostInputs): CostOperation {
-  const material = calculateMaterialCost(inputs.separations.filter((item) => item.orderId === inputs.order.id), inputs.inventory);
+  const material = calculateMaterialCost(
+    inputs.separations.filter((item) => item.orderId === inputs.order.id),
+    inputs.inventory
+  );
+
   const orderEntries = inputs.entries.filter((entry) => entry.orderId === inputs.order.id);
   const steps: CostOperationStep[] = [];
 
+  // 1. Apuração Direta de MOD por Horas Registradas na OP:
+  // Colaborador -> Hora registrada -> Processo/Etapa -> OP -> Produto
   for (const entry of orderEntries) {
     const step = inputs.steps.find((item) => item.id === entry.stepId);
     if (!step) continue;
-    const hours = calculateDurationHours(entry.startedAt, entry.endedAt);
-    const employee = inputs.employees.find((item) => item.id === (entry as ProductionEntry & { employeeId?: string }).employeeId);
+
+    // Prioriza horas registradas explicitamente no apontamento ou calcula de início/fim
+    const hours = (entry.hoursWorked !== undefined && entry.hoursWorked > 0)
+      ? entry.hoursWorked
+      : calculateDurationHours(entry.startedAt, entry.endedAt);
+
+    const employee = inputs.employees.find((item) => item.id === entry.employeeId);
     const manHours = hours * Math.max(1, step.laborQuantity || 1);
-    const laborCost = employee ? manHours * calculateEmployeeHourlyCost(employee) : 0;
+
+    // Se o apontamento já possui snapshot histórico de custo-hora, usa o snapshot gravado (não recalcula com dados futuros)
+    let hourlyRate = 0;
+    if (entry.hourlyCostSnapshot !== undefined && entry.hourlyCostSnapshot > 0) {
+      hourlyRate = entry.hourlyCostSnapshot;
+    } else if (employee) {
+      hourlyRate = calculateEmployeeHourlyCost(employee, inputs.charges);
+    } else {
+      const processEmployees = inputs.employees.filter(
+        (e) => e.laborType === 'DIRETA' && e.active !== false && (e.processId === step.processId || e.costCenterCode === step.costCenterCode)
+      );
+      if (processEmployees.length > 0) {
+        const sumRates = processEmployees.reduce((sum, e) => sum + calculateEmployeeHourlyCost(e, inputs.charges), 0);
+        hourlyRate = sumRates / processEmployees.length;
+      } else {
+        hourlyRate = step.hourlyRate || 0;
+      }
+    }
+
+    // Prioriza custo de MOD já apurado no apontamento ou horas * taxa
+    const laborCost = (entry.modCost !== undefined && entry.modCost > 0)
+      ? entry.modCost
+      : manHours * hourlyRate;
+
     const machine = inputs.equipment.find((item) => item.id === step.equipmentId);
-    const equipmentCost = machine ? calculateEquipmentDepreciation(machine, hours) + calculateEnergyCost(machine, hours) + calculateMaintenanceCost(machine, hours) + (machine.otherCostPerHour || 0) * hours : 0;
+    const equipmentCost = machine
+      ? calculateEquipmentDepreciation(machine, hours) +
+        calculateEnergyCost(machine, hours) +
+        calculateMaintenanceCost(machine, hours) +
+        (machine.otherCostPerHour || 0) * hours
+      : 0;
+
     steps.push({
       id: `step-cost-${entry.id}`,
       stepId: step.id,
@@ -207,18 +511,48 @@ export function calculateProductionOrderCost(inputs: ProductionCostInputs): Cost
   const equipmentEnergy = steps.reduce((sum, step) => sum + step.energyCost, 0);
   const maintenanceCost = steps.reduce((sum, step) => sum + step.maintenanceCost, 0);
   const depreciationCost = steps.reduce((sum, step) => sum + step.depreciationCost, 0);
-  const indirectLaborCost = (inputs.employees || []).filter((employee) => employee.laborType === 'INDIRETA').reduce((sum, employee) => sum + employee.baseSalary * (1 + employee.chargePercent / 100), 0);
-  const otherIndirectCost = (inputs.indirectCosts || []).filter((cost) => cost.active).reduce((sum, cost) => sum + cost.amount, 0);
-  const finishedQuantity = inputs.steps.filter((step) => /embalagem/i.test(`${step.title} ${step.line} ${step.costCenterCode || ''}`)).flatMap((step) => orderEntries.filter((entry) => entry.stepId === step.id)).reduce((sum, entry) => sum + entry.quantityProduced, 0);
-  const yieldData = calculateYield(inputs.order.quantity, finishedQuantity);
+
+  // 2. Apuração de MOI Rateada por Direcionador Configurável (não dividida diretamente)
+  const allOrders = inputs.orders && inputs.orders.length > 0 ? inputs.orders : [inputs.order];
+  const moiResult = calculateMoiApportionment(
+    allOrders,
+    inputs.entries,
+    inputs.employees,
+    inputs.processes || [],
+    inputs.moiDriver || 'HORAS_PRODUTIVAS',
+    inputs.order.id
+  );
+  const indirectLaborCost = moiResult.orderAllocatedMoi;
+
+  // 3. Outros custos indiretos (além de MOI)
+  const otherIndirectCost = (inputs.indirectCosts || [])
+    .filter((cost) => cost.active)
+    .reduce((sum, cost) => sum + cost.amount, 0);
+
+  // Quantidade de barras boas produzidas (etapa de embalagem / final)
+  const packagingEntries = inputs.steps
+    .filter((step) => /embalagem|envase|final/i.test(`${step.title} ${step.line || ''} ${step.costCenterCode || ''}`))
+    .flatMap((step) => orderEntries.filter((entry) => entry.stepId === step.id));
+
+  let goodBarsQuantity = packagingEntries.reduce((sum, entry) => sum + entry.quantityProduced, 0);
+  if (goodBarsQuantity <= 0) {
+    goodBarsQuantity = inputs.order.producedQuantity || inputs.order.quantity;
+  }
+
+  const yieldData = calculateYield(inputs.order.quantity, goodBarsQuantity);
   const totalCost = material.total + directLaborCost + indirectLaborCost + equipmentEnergy + maintenanceCost + depreciationCost + otherIndirectCost;
+  const unitCost = goodBarsQuantity > 0 ? totalCost / goodBarsQuantity : 0;
+
+  // Indicador médio de mão de obra por barra
+  const barSummary = calculateLaborCostBarSummary(directLaborCost, indirectLaborCost, goodBarsQuantity);
 
   return {
     id: `cost-${inputs.order.id}`,
     orderId: inputs.order.id,
     status: 'APURADO',
     plannedQuantity: inputs.order.quantity,
-    finishedQuantity,
+    finishedQuantity: goodBarsQuantity,
+    goodBarsQuantity,
     ...yieldData,
     materialCost: material.total,
     directLaborCost,
@@ -228,11 +562,15 @@ export function calculateProductionOrderCost(inputs: ProductionCostInputs): Cost
     depreciationCost,
     otherIndirectCost,
     totalCost,
-    unitCost: finishedQuantity > 0 ? totalCost / finishedQuantity : 0,
+    unitCost,
     version: 1,
     recalculationReason: '',
     calculatedAt: new Date().toISOString(),
     items: material.items,
     steps,
+    moiAllocations: moiResult.allocations,
+    modPerBar: barSummary.directLaborPerBar,
+    moiPerBar: barSummary.indirectLaborPerBar,
+    totalLaborPerBar: barSummary.totalLaborPerBar,
   };
 }
