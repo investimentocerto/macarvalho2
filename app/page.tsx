@@ -4,8 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   ViewMode, 
   Product, 
-  BOMComponent,
-  CostSector, 
+  BOMComponent, 
   ProcessStepItem, 
   InventoryItem, 
   StockMovement, 
@@ -54,7 +53,6 @@ export default function MaCarvalhoApp() {
   const [bomComponents, setBomComponents] = useState<BOMComponent[]>(INITIAL_BOM_COMPONENTS);
   const [processSteps, setProcessSteps] = useState<ProcessStepItem[]>(INITIAL_PROCESS_STEPS);
   const [productionProcesses, setProductionProcesses] = useState<ProductionProcess[]>(INITIAL_PRODUCTION_PROCESSES);
-  const [manufacturingProcesses, setManufacturingProcesses] = useState<CostSector[]>([]);
   const [equipment, setEquipment] = useState<Equipment[]>(INITIAL_EQUIPMENT);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>(INITIAL_INVENTORY);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>(INITIAL_MOVEMENTS);
@@ -82,15 +80,6 @@ export default function MaCarvalhoApp() {
     }, 3500);
   };
 
-  // Recarrega o cadastro de Processos de Fabricação ao abrir o roteiro,
-  // garantindo que novos cadastros feitos em Custos Industriais apareçam na seleção.
-  useEffect(() => {
-    if (currentView !== 'bom') return;
-    dbService.fetchCostSectors().then((items) => {
-      if (items) setManufacturingProcesses(items);
-    });
-  }, [currentView]);
-
   // Carregar dados remotos do Supabase ou localStorage
   useEffect(() => {
     // Sempre tentar carregar processos produtivos (mesmo offline/localStorage)
@@ -98,9 +87,6 @@ export default function MaCarvalhoApp() {
       if (localProcs && localProcs.length > 0) {
         setProductionProcesses(localProcs);
       }
-    });
-    dbService.fetchCostSectors().then((items) => {
-      if (items && items.length > 0) setManufacturingProcesses(items);
     });
     dbService.fetchEquipment().then((items) => {
       if (items && items.length > 0) setEquipment(items);
@@ -116,7 +102,7 @@ export default function MaCarvalhoApp() {
 
     const loadRemoteData = async () => {
       try {
-        const [remoteProds, remoteInv, remoteOps, remoteSales, remoteBom, remoteSteps, remoteMovements, remoteProcs, remoteManufacturingProcesses, remoteEquipment, remoteEntries, remoteSeparations] = await Promise.all([
+        const [remoteProds, remoteInv, remoteOps, remoteSales, remoteBom, remoteSteps, remoteMovements, remoteProcs, remoteEquipment, remoteEntries, remoteSeparations] = await Promise.all([
           dbService.fetchProducts(),
           dbService.fetchInventory(),
           dbService.fetchProductionOrders(),
@@ -125,7 +111,6 @@ export default function MaCarvalhoApp() {
           dbService.fetchProcessSteps(),
           dbService.fetchStockMovements(),
           dbService.fetchProductionProcesses(),
-          dbService.fetchCostSectors(),
           dbService.fetchEquipment(),
           dbService.fetchProductionEntries(),
           dbService.fetchProductionMaterialSeparations(),
@@ -142,7 +127,6 @@ export default function MaCarvalhoApp() {
         if (remoteSteps && remoteSteps.length > 0) setProcessSteps(remoteSteps);
         if (remoteMovements && remoteMovements.length > 0) setStockMovements(remoteMovements);
         if (remoteProcs && remoteProcs.length > 0) setProductionProcesses(remoteProcs);
-        if (remoteManufacturingProcesses && remoteManufacturingProcesses.length > 0) setManufacturingProcesses(remoteManufacturingProcesses);
         if (remoteEquipment && remoteEquipment.length > 0) setEquipment(remoteEquipment);
         if (remoteEntries && remoteEntries.length > 0) setProductionEntries(remoteEntries);
         if (remoteSeparations && remoteSeparations.length > 0) setMaterialSeparations(remoteSeparations);
@@ -518,7 +502,6 @@ export default function MaCarvalhoApp() {
               processSteps={processSteps}
               inventoryItems={inventoryItems}
               productionProcesses={productionProcesses}
-              manufacturingProcesses={manufacturingProcesses}
               equipment={equipment}
               onAddComponent={handleAddBOMComponent}
               onUpdateComponent={handleUpdateBOMComponent}
