@@ -227,8 +227,21 @@ export function calculateMaterialCost(
 
 export function calculateDurationHours(startedAt?: string, endedAt?: string): number {
   if (!startedAt || !endedAt) return 0;
+
+  // Se forem datas completas ou timestamps ISO (ex: "2026-09-14T10:00:00Z")
+  if (startedAt.includes('T') || startedAt.includes('-')) {
+    const startMs = Date.parse(startedAt);
+    const endMs = Date.parse(endedAt);
+    if (!isNaN(startMs) && !isNaN(endMs) && endMs >= startMs) {
+      return (endMs - startMs) / (1000 * 3600);
+    }
+  }
+
+  // Formatos simples de horário ("HH:mm" ou "HH:mm:ss")
   const parse = (value: string) => {
-    const [hours, minutes, seconds = 0]: number[] = value.split(':').map(Number);
+    const parts = value.split(':').map(Number);
+    if (parts.length < 2) return null;
+    const [hours, minutes, seconds = 0] = parts;
     if (![hours, minutes, seconds].every(Number.isFinite) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) return null;
     return hours * 3600 + minutes * 60 + seconds;
   };
@@ -239,14 +252,39 @@ export function calculateDurationHours(startedAt?: string, endedAt?: string): nu
   return elapsed > 0 ? elapsed / 3600 : 0;
 }
 
+/**
+ * Calcula a taxa horária de depreciação do equipamento com base nos parâmetros cadastrais:
+ * (Valor Aquisição - Valor Residual) / Vida Útil (anos) / 12 / Horas Disponíveis Mensais
+ */
+export function getEquipmentHourlyDepreciationRate(
+  equipment: Pick<Equipment, 'acquisitionCost' | 'residualValue' | 'estimatedUsefulLife' | 'productiveHoursAvailable'>
+): number {
+  const acquisitionCost = Math.max(0, Number(equipment.acquisitionCost) || 0);
+  const residualValue = Math.max(0, Number(equipment.residualValue) || 0);
+  const estimatedUsefulLife = Math.max(0, Number(equipment.estimatedUsefulLife) || 0);
+  const productiveHours = Math.max(1, Number(equipment.productiveHoursAvailable) || 220);
+
+  const depreciableValue = Math.max(0, acquisitionCost - residualValue);
+  if (estimatedUsefulLife <= 0 || productiveHours <= 0 || depreciableValue <= 0) return 0;
+  const annualDepreciation = depreciableValue / estimatedUsefulLife;
+  const monthlyDepreciation = annualDepreciation / 12;
+  return monthlyDepreciation / productiveHours;
+}
+
+/**
+ * Calcula a depreciação apropriada à Ordem de Produção:
+ * Depreciação da OP = Taxa Horária de Depreciação × Horas Efetivamente Operadas na OP
+ * 
+ * Regra: É PROIBIDO usar productiveHoursAvailable como tempo da OP.
+ * O tempo da OP deve ser o tempo real registrado na produção (ProductionEntry).
+ */
 export function calculateEquipmentDepreciation(
   equipment: Pick<Equipment, 'acquisitionCost' | 'residualValue' | 'estimatedUsefulLife' | 'productiveHoursAvailable'>,
   hours: number
 ): number {
-  const productiveHours = equipment.productiveHoursAvailable ?? 0;
-  if (equipment.estimatedUsefulLife <= 0 || productiveHours <= 0 || hours <= 0) return 0;
-  const monthly = Math.max(0, equipment.acquisitionCost - equipment.residualValue) / equipment.estimatedUsefulLife / 12;
-  return (monthly / productiveHours) * hours;
+  if (!hours || hours <= 0) return 0;
+  const hourlyRate = getEquipmentHourlyDepreciationRate(equipment);
+  return hourlyRate * hours;
 }
 
 export function getEquipmentDepreciationDetails(
@@ -503,10 +541,17 @@ export function calculateProductionOrderCost(inputs: ProductionCostInputs): Cost
     const step = inputs.steps.find((item) => item.id === entry.stepId);
     if (!step) continue;
 
-    // Prioriza horas registradas explicitamente no apontamento ou calcula de início/fim
-    const hours = (entry.hoursWorked !== undefined && entry.hoursWorked > 0)
-      ? entry.hoursWorked
-      : calculateDurationHours(entry.startedAt, entry.endedAt);
+    // Prioridade estrita do tempo real de operação da OP (Seção 9):
+    // 1. Se hoursWorked estiver informado e for maior que zero, utilizar hoursWorked.
+    // 2. Caso contrário, calcular através de startedAt -> endedAt (calculateDurationHours).
+    // 3. Se não houver tempo válido, considerar zero.
+    let hours = 0;
+    if (entry.hoursWorked !== undefined && entry.hoursWorked !== null && Number(entry.hoursWorked) > 0) {
+      hours = Number(entry.hoursWorked);
+    } else if (entry.startedAt && entry.endedAt) {
+      hours = calculateDurationHours(entry.startedAt, entry.endedAt);
+    }
+    if (isNaN(hours) || hours < 0) hours = 0;
 
     const employee = inputs.employees.find((item) => item.id === entry.employeeId);
     const manHours = hours * Math.max(1, step.laborQuantity || 1);
@@ -534,13 +579,28 @@ export function calculateProductionOrderCost(inputs: ProductionCostInputs): Cost
       ? entry.modCost
       : manHours * hourlyRate;
 
-    const machine = inputs.equipment.find((item) => item.id === step.equipmentId);
+    // Identificação do equipamento da etapa (por ID ou correspondência de nome/código)
+    const machine = inputs.equipment.find(
+      (item) =>
+        item.id === step.equipmentId ||
+        (step.machine && (item.name.toLowerCase() === step.machine.toLowerCase() || item.code.toLowerCase() === step.machine.toLowerCase()))
+    );
+
+    // Identificação do Centro de Custo associado ao equipamento ou à etapa
+    const procId = machine?.processId || step.processId;
+    const proc = inputs.processes?.find((p) => p.id === procId);
+    const costCenterCode = proc?.code || step.costCenterCode;
+    const costCenterName = proc?.description;
+
+    // Cálculo dos custos de máquina estritamente pelo tempo real de operação da OP (hours):
     const stepDepreciation = machine ? calculateEquipmentDepreciation(machine, hours) : 0;
     const stepEnergy = machine ? calculateEnergyCost(machine, hours) : 0;
     const stepMaintenance = machine ? calculateMaintenanceCost(machine, hours) : 0;
     const stepOtherEquipment = machine ? ((machine.otherCostPerHour || 0) * hours) : 0;
 
-    // Regra oficial: equipmentCost = depreciationCost + maintenanceCost + otherEquipmentCost (sem energia!)
+    // Regra oficial de classificação contábil:
+    // equipmentCost = depreciationCost + maintenanceCost + otherEquipmentCost (sem energia!)
+    // A energia elétrica é classificada separadamente como CIF - Energia Elétrica
     const equipmentCost = stepDepreciation + stepMaintenance + stepOtherEquipment;
 
     steps.push({
@@ -554,6 +614,10 @@ export function calculateProductionOrderCost(inputs: ProductionCostInputs): Cost
       maintenanceCost: stepMaintenance,
       depreciationCost: stepDepreciation,
       totalCost: laborCost + equipmentCost + stepEnergy,
+      equipmentId: machine?.id,
+      equipmentName: machine?.name || step.machine,
+      costCenterCode,
+      costCenterName,
     });
   }
 

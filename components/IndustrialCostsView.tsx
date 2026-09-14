@@ -29,6 +29,7 @@ import {
   Eye,
   X,
   Cpu,
+  Save,
 } from 'lucide-react';
 import { dbService } from '@/lib/db-service';
 import {
@@ -71,6 +72,9 @@ interface IndustrialCostsViewProps {
   onAddEquipment?: (equipment: Equipment) => void;
   onUpdateEquipment?: (equipment: Equipment) => void;
   onDeleteEquipment?: (id: string) => void;
+  onAddProcess?: (process: ProductionProcess) => void;
+  onUpdateProcess?: (process: ProductionProcess) => void;
+  onDeleteProcess?: (id: string) => void;
   onCloseOrder?: (order: ProductionOrder, operation: CostOperation) => void;
   onNotify?: (message: string) => void;
 }
@@ -78,8 +82,9 @@ interface IndustrialCostsViewProps {
 type Tab =
   | 'apuracao'
   | 'ops'
-  | 'colaboradores'
+  | 'centros-custo'
   | 'setores'
+  | 'colaboradores'
   | 'encargos'
   | 'equipamentos'
   | 'manutencao'
@@ -87,10 +92,11 @@ type Tab =
 
 const tabs: [Tab, string, string][] = [
   ['apuracao', 'Apuração Integrada', 'MOD direta, MOI rateada e Custo por Barra'],
-  ['colaboradores', 'Colaboradores', 'MOD/MOI, Setor -> Centro de Custo e Encargos'],
-  ['setores', 'Setores', 'Vínculo de Setor a Centro de Custo'],
-  ['encargos', 'Encargos & Provisões', 'Tabela oficial de encargos e provisões CLT'],
   ['ops', 'Ordens de Produção', 'Seleção de OPs para custeio'],
+  ['centros-custo', 'Centro de Custo', 'Gestão de Centros de Custo da fábrica'],
+  ['setores', 'Setores', 'Vínculo de Setor a Centro de Custo'],
+  ['colaboradores', 'Colaboradores', 'MOD/MOI, Setor -> Centro de Custo e Encargos'],
+  ['encargos', 'Encargos & Provisões', 'Tabela oficial de encargos e provisões CLT'],
   ['equipamentos', 'Equipamentos', 'Cadastro centralizado de máquinas, depreciação CIF e energia CIF'],
   ['manutencao', 'Manutenção', 'Preventiva e corretiva'],
   ['indiretos', 'Custos Indiretos (CIF)', 'Outros custos de infraestrutura e fábrica'],
@@ -111,6 +117,9 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
   onAddEquipment,
   onUpdateEquipment,
   onDeleteEquipment,
+  onAddProcess,
+  onUpdateProcess,
+  onDeleteProcess,
   onCloseOrder,
   onNotify,
 }) => {
@@ -118,6 +127,24 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
   const [orderId, setOrderId] = useState(orders[0]?.id || '');
   const [operation, setOperation] = useState<CostOperation | null>(null);
   const [moiDriver, setMoiDriver] = useState<CostDriverType>('HORAS_PRODUTIVAS');
+
+  // Centros de Custo gerenciados na aba CUSTOS INDUSTRIAIS -> CENTRO DE CUSTO (production_processes)
+  const [processesList, setProcessesList] = useState<ProductionProcess[]>(processes || []);
+  const [prevProcessesProp, setPrevProcessesProp] = useState(processes);
+
+  if (processes !== prevProcessesProp) {
+    setPrevProcessesProp(processes);
+    setProcessesList(processes || []);
+  }
+
+  const [costCenterSearch, setCostCenterSearch] = useState('');
+  const [isCostCenterModalOpen, setIsCostCenterModalOpen] = useState(false);
+  const [editingCostCenterId, setEditingCostCenterId] = useState<string | null>(null);
+  const [costCenterForm, setCostCenterForm] = useState({
+    code: '',
+    description: '',
+    hourlyRate: '0.00',
+  });
 
   // Dados carregados
   const [employees, setEmployees] = useState<CostEmployee[]>([]);
@@ -282,7 +309,7 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
       inventory,
       employees,
       equipment: equipmentList,
-      processes,
+      processes: processesList,
       charges,
       indirectCosts,
       maintenance,
@@ -569,6 +596,121 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
     setHistoryList(records);
   };
 
+  // Filtro na listagem de Centros de Custo (production_processes)
+  const filteredCostCenters = useMemo(() => {
+    return processesList.filter((proc) => {
+      const q = costCenterSearch.toLowerCase().trim();
+      if (!q) return true;
+      return (
+        proc.code.toLowerCase().includes(q) ||
+        proc.description.toLowerCase().includes(q)
+      );
+    });
+  }, [processesList, costCenterSearch]);
+
+  // Handlers: Centros de Custo
+  const handleOpenNewCostCenter = () => {
+    setEditingCostCenterId(null);
+    const nextNum = processesList.length + 1;
+    setCostCenterForm({
+      code: `CC-${String(nextNum).padStart(2, '0')}`,
+      description: '',
+      hourlyRate: '0.00',
+    });
+    setIsCostCenterModalOpen(true);
+  };
+
+  const handleEditCostCenter = (proc: ProductionProcess) => {
+    setEditingCostCenterId(proc.id);
+    setCostCenterForm({
+      code: proc.code,
+      description: proc.description,
+      hourlyRate: (proc.hourlyRate || 0).toFixed(2),
+    });
+    setIsCostCenterModalOpen(true);
+  };
+
+  const handleSaveCostCenter = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!costCenterForm.code.trim() || !costCenterForm.description.trim()) {
+      onNotify?.('Preencha o código e a descrição do Centro de Custo.');
+      return;
+    }
+
+    const payload: ProductionProcess = {
+      id: editingCostCenterId || `proc-${Date.now()}`,
+      code: costCenterForm.code.trim().toUpperCase(),
+      description: costCenterForm.description.trim(),
+      hourlyRate: Math.max(0, parseFloat(costCenterForm.hourlyRate) || 0),
+      createdAt: editingCostCenterId
+        ? processesList.find((p) => p.id === editingCostCenterId)?.createdAt
+        : new Date().toISOString(),
+    };
+
+    const saved = await dbService.saveProductionProcess(payload);
+    if (saved) {
+      if (editingCostCenterId) {
+        setProcessesList((prev) => prev.map((p) => (p.id === payload.id ? payload : p)));
+        onUpdateProcess?.(payload);
+      } else {
+        setProcessesList((prev) => [...prev, payload]);
+        onAddProcess?.(payload);
+      }
+      setIsCostCenterModalOpen(false);
+      onNotify?.(`Centro de Custo [${payload.code}] salvo com sucesso.`);
+    } else {
+      onNotify?.('Erro ao salvar Centro de Custo.');
+    }
+  };
+
+  const handleDeleteCostCenter = async (proc: ProductionProcess) => {
+    // Validação impeditiva de vínculos (Seção 3):
+    const linkedSectors = sectors.filter((s) => s.costCenterId === proc.id);
+    const linkedEq = equipmentList.filter((e) => e.processId === proc.id);
+    const linkedSteps = steps.filter((st) => st.processId === proc.id || st.costCenterCode === proc.code);
+    const linkedEmp = employees.filter(
+      (emp) => emp.costCenterId === proc.id || emp.processId === proc.id || emp.costCenterCode === proc.code
+    );
+
+    const hasBlockers =
+      linkedSectors.length > 0 ||
+      linkedEq.length > 0 ||
+      linkedSteps.length > 0 ||
+      linkedEmp.length > 0;
+
+    if (hasBlockers) {
+      const details: string[] = [];
+      if (linkedSectors.length > 0)
+        details.push(`${linkedSectors.length} setor(es) vinculado(s): ${linkedSectors.map((s) => s.name).join(', ')}`);
+      if (linkedEq.length > 0)
+        details.push(`${linkedEq.length} equipamento(s) vinculado(s): ${linkedEq.map((e) => e.name).join(', ')}`);
+      if (linkedSteps.length > 0)
+        details.push(`${linkedSteps.length} etapa(s) de roteiro`);
+      if (linkedEmp.length > 0)
+        details.push(`${linkedEmp.length} colaborador(es)`);
+
+      alert(
+        `Não é possível excluir o Centro de Custo [${proc.code}] - ${proc.description} porque ele possui vínculos ativos:\n\n• ${details.join(
+          '\n• '
+        )}\n\nReatribua ou remova esses vínculos antes de excluir o Centro de Custo.`
+      );
+      return;
+    }
+
+    if (!confirm(`Deseja realmente excluir o Centro de Custo [${proc.code}] - ${proc.description}?`)) {
+      return;
+    }
+
+    const deleted = await dbService.deleteProductionProcess(proc.id);
+    if (deleted) {
+      setProcessesList((prev) => prev.filter((p) => p.id !== proc.id));
+      onDeleteProcess?.(proc.id);
+      onNotify?.(`Centro de Custo [${proc.code}] excluído com sucesso.`);
+    } else {
+      onNotify?.('Erro ao excluir Centro de Custo.');
+    }
+  };
+
   // Salvar Setor
   const handleSaveSector = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -762,7 +904,7 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
               Centros de Custo
             </span>
             <span className="text-lg font-black text-[#954a00]">
-              {processes.length || sectors.length}
+              {processesList.length}
             </span>
           </div>
         </div>
@@ -783,11 +925,15 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                   : 'bg-white text-[#574335] border border-[#dec1af] hover:bg-[#dec1af]/20'
               }`}
             >
-              {id === 'colaboradores' && <Users className="w-3.5 h-3.5" />}
-              {id === 'setores' && <Layers className="w-3.5 h-3.5" />}
-              {id === 'encargos' && <DollarSign className="w-3.5 h-3.5" />}
               {id === 'apuracao' && <Calculator className="w-3.5 h-3.5" />}
               {id === 'ops' && <Clock className="w-3.5 h-3.5" />}
+              {id === 'centros-custo' && <Building2 className="w-3.5 h-3.5" />}
+              {id === 'setores' && <Layers className="w-3.5 h-3.5" />}
+              {id === 'colaboradores' && <Users className="w-3.5 h-3.5" />}
+              {id === 'encargos' && <DollarSign className="w-3.5 h-3.5" />}
+              {id === 'equipamentos' && <Cpu className="w-3.5 h-3.5" />}
+              {id === 'manutencao' && <Wrench className="w-3.5 h-3.5" />}
+              {id === 'indiretos' && <PieChart className="w-3.5 h-3.5" />}
               {label}
             </button>
           );
@@ -1084,7 +1230,7 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-[#574335]">
-                      Detalhamento de MOD Direta e Máquinas por Etapa do Roteiro
+                      Detalhamento de MOD Direta e Custos de Máquina por Etapa do Roteiro
                     </h4>
                     <span className="text-xs text-[#574335]">
                       {operation.steps.length} etapas apuradas
@@ -1095,38 +1241,67 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                     <table className="w-full text-xs">
                       <thead className="bg-[#f4f3f1] text-[#574335]">
                         <tr>
-                          <th className="p-3 text-left">Etapa / Processo</th>
-                          <th className="p-3 text-right">Duração (h)</th>
+                          <th className="p-3 text-left">Centro de Custo & Equipamento</th>
+                          <th className="p-3 text-left">Etapa / Roteiro</th>
+                          <th className="p-3 text-right">Tempo Real OP (h)</th>
                           <th className="p-3 text-right">Homem-Hora</th>
                           <th className="p-3 text-right text-emerald-800">MOD Direta</th>
                           <th className="p-3 text-right text-sky-800">CIF - Energia</th>
-                          <th className="p-3 text-right text-stone-700">Equipamento (Depr.+Manut.)</th>
+                          <th className="p-3 text-right text-emerald-700">CIF - Depreciação</th>
+                          <th className="p-3 text-right text-amber-800">CIF - Manutenção</th>
                           <th className="p-3 text-right font-bold text-[#1a1c1b]">Total da Etapa</th>
                         </tr>
                       </thead>
                       <tbody>
                         {operation.steps.map((item) => {
                           const stepObj = steps.find((s) => s.id === item.stepId);
+                          const procCode = item.costCenterCode || stepObj?.costCenterCode;
+                          const procObj = processesList.find((p) => p.code === procCode || p.id === stepObj?.processId);
+                          const machineObj = equipmentList.find(
+                            (e) =>
+                              e.id === item.equipmentId ||
+                              e.id === stepObj?.equipmentId ||
+                              (stepObj?.machine && (e.name.toLowerCase() === stepObj.machine.toLowerCase() || e.code.toLowerCase() === stepObj.machine.toLowerCase()))
+                          );
+
                           return (
                             <tr key={item.id} className="border-b border-[#e9e8e6] hover:bg-stone-50">
+                              <td className="p-3 text-[#1a1c1b]">
+                                <div className="font-bold flex items-center gap-1.5">
+                                  {procCode ? (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-stone-200 text-stone-800 font-bold">
+                                      {procCode}
+                                    </span>
+                                  ) : null}
+                                  <span>{procObj?.description || item.costCenterName || 'Centro Fabril'}</span>
+                                </div>
+                                <div className="text-[11px] text-[#574335] mt-0.5 flex items-center gap-1">
+                                  <Cpu className="w-3 h-3 text-stone-400" />
+                                  <span>
+                                    {machineObj ? `${machineObj.code} - ${machineObj.name}` : (item.equipmentName || stepObj?.machine || 'Operação Manual')}
+                                  </span>
+                                </div>
+                              </td>
                               <td className="p-3 font-medium text-[#1a1c1b]">
                                 {stepObj?.title || item.stepId}
-                                {stepObj?.costCenterCode && (
-                                  <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-stone-200 text-stone-700">
-                                    {stepObj.costCenterCode}
-                                  </span>
-                                )}
                               </td>
-                              <td className="p-3 text-right">{item.durationHours.toFixed(2)} h</td>
-                              <td className="p-3 text-right">{item.manHours.toFixed(2)} h</td>
+                              <td className="p-3 text-right font-bold text-[#1a1c1b]">
+                                {item.durationHours.toFixed(2)} h
+                              </td>
+                              <td className="p-3 text-right text-[#574335]">
+                                {item.manHours.toFixed(2)} h
+                              </td>
                               <td className="p-3 text-right font-semibold text-emerald-700">
                                 {formatCurrency(item.laborCost)}
                               </td>
                               <td className="p-3 text-right font-semibold text-sky-800">
                                 {formatCurrency(item.energyCost)}
                               </td>
-                              <td className="p-3 text-right text-stone-700">
-                                {formatCurrency(item.equipmentCost)}
+                              <td className="p-3 text-right font-semibold text-emerald-800">
+                                {formatCurrency(item.depreciationCost)}
+                              </td>
+                              <td className="p-3 text-right font-semibold text-amber-800">
+                                {formatCurrency(item.maintenanceCost)}
                               </td>
                               <td className="p-3 text-right font-black text-[#1a1c1b]">
                                 {formatCurrency(item.totalCost)}
@@ -1139,7 +1314,7 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                     <div className="px-3.5 py-2.5 bg-stone-50 border-t border-[#e9e8e6] text-[11px] text-[#574335] flex items-center gap-2">
                       <Info className="w-3.5 h-3.5 text-[#954a00] shrink-0" />
                       <span>
-                        <strong>Regra de Classificação Contábil:</strong> O custo de Equipamento na etapa considera Depreciação + Manutenção + Outros por hora. A Energia Elétrica é classificada e apurada separadamente como CIF (Custo Indireto de Fabricação), sem duplicidade.
+                        <strong>Regra de Classificação Contábil:</strong> A depreciação, energia elétrica e manutenção das máquinas são calculadas estritamente pelo tempo real de operação registrado na OP (sem duplicidade). As horas disponíveis do equipamento calibram a taxa horária de depreciação cadastral. A energia e a depreciação são classificadas como CIF (Custos Indiretos de Fabricação).
                       </span>
                     </div>
                   </div>
@@ -1165,6 +1340,322 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                 </div>
               </div>
             )}
+          </div>
+        </section>
+      )}
+
+      {/* ========================================================================= */}
+      {/* ABA: ORDENS DE PRODUÇÃO (Seleção e Consulta de OPs) */}
+      {/* ========================================================================= */}
+      {tab === 'ops' && (
+        <section id="section-ops" className="space-y-6">
+          <div className="bg-white rounded-2xl border border-[#dec1af] p-6 shadow-xs space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#dec1af]/30 pb-4">
+              <div>
+                <span className="text-xs uppercase font-bold tracking-wider text-[#954a00]">
+                  Produção Fabril
+                </span>
+                <h2 className="text-xl font-black text-[#1a1c1b] flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-[#954a00]" />
+                  Ordens de Produção
+                </h2>
+                <p className="text-xs text-[#574335] mt-0.5">
+                  Consulte as Ordens de Produção e selecione qualquer ordem para apurar os custos industriais (MOD direta, MOI rateada, CIF energia e CIF depreciação).
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-[#dec1af]/60">
+              <table className="w-full text-xs">
+                <thead className="bg-[#f4f3f1] text-[#574335] font-bold">
+                  <tr>
+                    <th className="p-3 text-left">Número OP</th>
+                    <th className="p-3 text-left">Produto</th>
+                    <th className="p-3 text-right">Lote Planejado</th>
+                    <th className="p-3 text-left">Data de Criação</th>
+                    <th className="p-3 text-center">Status</th>
+                    <th className="p-3 text-center">Apontamentos Realizados</th>
+                    <th className="p-3 text-center">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orders.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-[#574335]">
+                        <Clock className="w-8 h-8 text-stone-300 mx-auto mb-2" />
+                        <p className="font-semibold text-sm">Nenhuma Ordem de Produção cadastrada</p>
+                      </td>
+                    </tr>
+                  ) : (
+                    orders.map((ord) => {
+                      const ordEntries = entries.filter((e) => e.orderId === ord.id);
+                      const totalHours = ordEntries.reduce((sum, e) => {
+                        const h = e.hoursWorked || 0;
+                        return sum + h;
+                      }, 0);
+
+                      return (
+                        <tr key={ord.id} className="border-b border-[#e9e8e6] hover:bg-stone-50 transition-colors">
+                          <td className="p-3 font-bold text-[#1a1c1b]">{ord.opNumber}</td>
+                          <td className="p-3 font-medium text-[#1a1c1b]">{ord.productName}</td>
+                          <td className="p-3 text-right font-semibold">{ord.quantity} barras</td>
+                          <td className="p-3 text-[#574335]">
+                            {ord.openingDate ? new Date(ord.openingDate).toLocaleDateString('pt-BR') : '-'}
+                          </td>
+                          <td className="p-3 text-center">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                ord.status === 'Concluída'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : ord.status === 'Em Andamento'
+                                  ? 'bg-sky-100 text-sky-800'
+                                  : ord.status === 'Parada'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-stone-100 text-stone-700'
+                              }`}
+                            >
+                              {ord.status}
+                            </span>
+                          </td>
+                          <td className="p-3 text-center text-[#574335]">
+                            <span className="font-semibold text-[#1a1c1b]">{ordEntries.length}</span> apontamentos
+                            {totalHours > 0 && ` (${totalHours.toFixed(2)}h)`}
+                          </td>
+                          <td className="p-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOrderId(ord.id);
+                                setTab('apuracao');
+                              }}
+                              className="px-3 py-1.5 bg-[#954a00] hover:bg-[#7a3c00] text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1 mx-auto shadow-xs"
+                            >
+                              <Calculator className="w-3.5 h-3.5" />
+                              Apurar Custos
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ========================================================================= */}
+      {/* ABA: CENTRO DE CUSTO (production_processes) */}
+      {/* ========================================================================= */}
+      {tab === 'centros-custo' && (
+        <section id="section-centros-custo" className="space-y-6">
+          <div className="bg-white rounded-2xl border border-[#dec1af] p-6 shadow-xs space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#dec1af]/30 pb-4">
+              <div>
+                <span className="text-xs uppercase font-bold tracking-wider text-[#954a00]">
+                  Estrutura Fabril & Contábil
+                </span>
+                <h2 className="text-xl font-black text-[#1a1c1b] flex items-center gap-2">
+                  <Building2 className="w-5 h-5 text-[#954a00]" />
+                  Centros de Custo Fabris
+                </h2>
+                <p className="text-xs text-[#574335] mt-0.5">
+                  Gestão centralizada dos Centros de Custo fabris (<code className="bg-stone-100 px-1 py-0.5 rounded text-[11px]">production_processes</code>). Base estrutural para alocação de Setores, Equipamentos, Colaboradores e rateio de CIF/MOI.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  id="btn-novo-centro-custo"
+                  onClick={handleOpenNewCostCenter}
+                  className="px-4 py-2.5 bg-[#954a00] hover:bg-[#7a3c00] text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-1.5"
+                >
+                  <Plus className="w-4 h-4" />
+                  Novo Centro de Custo
+                </button>
+              </div>
+            </div>
+
+            {/* Cards de Resumo */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="rounded-xl bg-[#f4f3f1] p-3.5 border border-[#dec1af]/40">
+                <span className="block text-[11px] font-bold text-[#574335]">Total de Centros de Custo</span>
+                <strong className="text-xl font-black text-[#1a1c1b]">{processesList.length}</strong>
+                <span className="block text-[10px] text-stone-500 mt-0.5">Centros cadastrados</span>
+              </div>
+
+              <div className="rounded-xl bg-[#f4f3f1] p-3.5 border border-[#dec1af]/40">
+                <span className="block text-[11px] font-bold text-[#574335]">Setores Vinculados</span>
+                <strong className="text-xl font-black text-amber-900">
+                  {sectors.filter((s) => processesList.some((p) => p.id === s.costCenterId)).length}
+                </strong>
+                <span className="block text-[10px] text-stone-500 mt-0.5">Setores alocados</span>
+              </div>
+
+              <div className="rounded-xl bg-[#f4f3f1] p-3.5 border border-[#dec1af]/40">
+                <span className="block text-[11px] font-bold text-[#574335]">Equipamentos Alocados</span>
+                <strong className="text-xl font-black text-emerald-800">
+                  {equipmentList.filter((e) => processesList.some((p) => p.id === e.processId)).length}
+                </strong>
+                <span className="block text-[10px] text-stone-500 mt-0.5">Máquinas fabris vinculadas</span>
+              </div>
+
+              <div className="rounded-xl bg-[#f4f3f1] p-3.5 border border-[#dec1af]/40">
+                <span className="block text-[11px] font-bold text-[#574335]">Colaboradores Alocados</span>
+                <strong className="text-xl font-black text-sky-900">
+                  {employees.filter((emp) =>
+                    processesList.some((p) => p.id === emp.costCenterId || p.id === emp.processId || p.code === emp.costCenterCode)
+                  ).length}
+                </strong>
+                <span className="block text-[10px] text-stone-500 mt-0.5">Mão de obra (MOD + MOI)</span>
+              </div>
+            </div>
+
+            {/* Barra de Pesquisa */}
+            <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
+              <div className="relative w-full sm:w-96">
+                <Search className="w-4 h-4 text-stone-400 absolute left-3 top-3" />
+                <input
+                  type="text"
+                  placeholder="Pesquisar por código ou descrição do centro de custo..."
+                  value={costCenterSearch}
+                  onChange={(e) => setCostCenterSearch(e.target.value)}
+                  className={`${inputClass} pl-9`}
+                />
+              </div>
+
+              <span className="text-xs text-[#574335]">
+                Exibindo <strong>{filteredCostCenters.length}</strong> de <strong>{processesList.length}</strong> centros de custo
+              </span>
+            </div>
+
+            {/* Listagem de Centros de Custo */}
+            <div className="overflow-x-auto rounded-xl border border-[#dec1af]/60">
+              <table className="w-full text-xs">
+                <thead className="bg-[#f4f3f1] text-[#574335] font-bold">
+                  <tr>
+                    <th className="p-3 text-left">Código</th>
+                    <th className="p-3 text-left">Descrição do Centro de Custo</th>
+                    <th className="p-3 text-right">Taxa Referência (R$/h)</th>
+                    <th className="p-3 text-center">Setores Vinculados</th>
+                    <th className="p-3 text-center">Equipamentos Vinculados</th>
+                    <th className="p-3 text-center">Colaboradores</th>
+                    <th className="p-3 text-center">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredCostCenters.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-[#574335]">
+                        <Building2 className="w-8 h-8 text-stone-300 mx-auto mb-2" />
+                        <p className="font-semibold text-sm">Nenhum Centro de Custo encontrado</p>
+                        <p className="text-xs text-stone-400 mt-0.5">
+                          {costCenterSearch
+                            ? 'Nenhum resultado corresponde à pesquisa.'
+                            : 'Clique em "Novo Centro de Custo" para cadastrar o primeiro centro fabril.'}
+                        </p>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredCostCenters.map((proc) => {
+                      const linkedSectors = sectors.filter((s) => s.costCenterId === proc.id);
+                      const linkedEq = equipmentList.filter((e) => e.processId === proc.id);
+                      const linkedEmp = employees.filter(
+                        (emp) => emp.costCenterId === proc.id || emp.processId === proc.id || emp.costCenterCode === proc.code
+                      );
+
+                      return (
+                        <tr key={proc.id} className="border-b border-[#e9e8e6] hover:bg-stone-50 transition-colors">
+                          <td className="p-3 font-bold text-[#1a1c1b] whitespace-nowrap">
+                            <span className="px-2 py-0.5 rounded-md bg-[#954a00]/10 text-[#954a00] font-black">
+                              {proc.code}
+                            </span>
+                          </td>
+                          <td className="p-3 font-medium text-[#1a1c1b]">
+                            <div>{proc.description}</div>
+                          </td>
+                          <td className="p-3 text-right font-semibold text-[#1a1c1b]">
+                            {proc.hourlyRate ? formatCurrency(proc.hourlyRate) : 'R$ 0,00'}/h
+                          </td>
+                          <td className="p-3 text-center">
+                            {linkedSectors.length > 0 ? (
+                              <span
+                                title={linkedSectors.map((s) => s.name).join(', ')}
+                                className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold text-[11px]"
+                              >
+                                {linkedSectors.length} {linkedSectors.length === 1 ? 'setor' : 'setores'}
+                              </span>
+                            ) : (
+                              <span className="text-stone-400 italic text-[11px]">0 setores</span>
+                            )}
+                          </td>
+                          <td className="p-3 text-center">
+                            {linkedEq.length > 0 ? (
+                              <span
+                                title={linkedEq.map((e) => e.name).join(', ')}
+                                className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900 font-bold text-[11px]"
+                              >
+                                {linkedEq.length} {linkedEq.length === 1 ? 'máquina' : 'máquinas'}
+                              </span>
+                            ) : (
+                              <span className="text-stone-400 italic text-[11px]">0 máquinas</span>
+                            )}
+                          </td>
+                          <td className="p-3 text-center">
+                            {linkedEmp.length > 0 ? (
+                              <span
+                                title={linkedEmp.map((e) => e.name).join(', ')}
+                                className="px-2 py-0.5 rounded-full bg-sky-100 text-sky-900 font-bold text-[11px]"
+                              >
+                                {linkedEmp.length} {linkedEmp.length === 1 ? 'colab.' : 'colabs.'}
+                              </span>
+                            ) : (
+                              <span className="text-stone-400 italic text-[11px]">0 colabs.</span>
+                            )}
+                          </td>
+                          <td className="p-3 text-center whitespace-nowrap">
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                type="button"
+                                title="Editar Centro de Custo"
+                                onClick={() => handleEditCostCenter(proc)}
+                                className="p-1.5 rounded-lg text-stone-600 hover:bg-[#dec1af]/30 hover:text-[#954a00] transition-all"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                title="Excluir Centro de Custo"
+                                onClick={() => handleDeleteCostCenter(proc)}
+                                className="p-1.5 rounded-lg text-stone-600 hover:bg-red-100 hover:text-red-700 transition-all"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Painel Informativo da Estrutura */}
+            <div className="p-4 rounded-xl bg-[#f4f3f1] border border-[#dec1af]/40 text-xs text-[#574335] space-y-1.5">
+              <div className="flex items-center gap-2 font-bold text-[#1a1c1b]">
+                <Info className="w-4 h-4 text-[#954a00]" />
+                <span>Hierarquia Organizacional e Contábil do ERP</span>
+              </div>
+              <p className="text-[11px] leading-relaxed">
+                <strong>CENTRO DE CUSTO</strong> (entidade <code className="bg-white px-1 py-0.5 rounded text-[10px]">production_processes</code>) agrega:{' '}
+                <strong>SETORES</strong> (<code className="bg-white px-1 py-0.5 rounded text-[10px]">costCenterId</code>) onde trabalham os <strong>COLABORADORES</strong>;{' '}
+                <strong>EQUIPAMENTOS</strong> (<code className="bg-white px-1 py-0.5 rounded text-[10px]">processId</code>) que depreciam e consomem energia por tempo real da OP;{' '}
+                <strong>MANUTENÇÕES</strong> e <strong>MOI RATEADA</strong>. A exclusão de um Centro de Custo é bloqueada automaticamente enquanto houver vínculos ativos.
+              </p>
+            </div>
           </div>
         </section>
       )}
@@ -2926,6 +3417,101 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                 Fechar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Cadastro / Edição de Centro de Custo */}
+      {isCostCenterModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-[#dec1af] shadow-xl max-w-lg w-full p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex justify-between items-center border-b border-[#dec1af]/40 pb-3">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-[#954a00]" />
+                <h3 className="text-lg font-black text-[#1a1c1b]">
+                  {editingCostCenterId ? 'Editar Centro de Custo' : 'Novo Centro de Custo'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCostCenterModalOpen(false)}
+                className="p-1.5 rounded-lg text-stone-500 hover:bg-stone-100 font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCostCenter} className="space-y-4">
+              <div>
+                <label className={labelClass}>Código do Centro de Custo *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: CC-01, CC-FORJA, CC-USINAGEM"
+                  value={costCenterForm.code}
+                  onChange={(e) =>
+                    setCostCenterForm((prev) => ({ ...prev, code: e.target.value.toUpperCase() }))
+                  }
+                  className={inputClass}
+                />
+                <span className="text-[10px] text-stone-500 mt-1 block">
+                  Identificador alfanumérico único para alocação de setores e máquinas.
+                </span>
+              </div>
+
+              <div>
+                <label className={labelClass}>Descrição / Nome do Centro de Custo *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Forjaria e Conformação, Usinagem CNC, Montagem"
+                  value={costCenterForm.description}
+                  onChange={(e) =>
+                    setCostCenterForm((prev) => ({ ...prev, description: e.target.value }))
+                  }
+                  className={inputClass}
+                />
+              </div>
+
+              <div>
+                <label className={labelClass}>Taxa Horária de Referência (R$/h)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  value={costCenterForm.hourlyRate}
+                  onChange={(e) =>
+                    setCostCenterForm((prev) => ({ ...prev, hourlyRate: e.target.value }))
+                  }
+                  className={inputClass}
+                />
+                <span className="text-[10px] text-stone-500 mt-1 block">
+                  Taxa padrão de referência por hora de processo (opcional).
+                </span>
+              </div>
+
+              <div className="p-3 bg-[#f4f3f1] rounded-xl border border-[#dec1af]/40 text-[11px] text-[#574335]">
+                Ao salvar, este Centro de Custo fica imediatamente disponível para vincular novos Setores e Equipamentos sem perder nenhum dado já existente.
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-[#dec1af]/30">
+                <button
+                  type="button"
+                  onClick={() => setIsCostCenterModalOpen(false)}
+                  className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-xl text-xs font-bold transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-[#954a00] hover:bg-[#7a3c00] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {editingCostCenterId ? 'Atualizar Centro de Custo' : 'Salvar Centro de Custo'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

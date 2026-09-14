@@ -310,6 +310,10 @@ export interface CostOperationStep {
   maintenanceCost: number;
   depreciationCost: number;
   totalCost: number;
+  equipmentId?: string;
+  equipmentName?: string;
+  costCenterCode?: string;
+  costCenterName?: string;
 }
 
 export interface CostMoiAllocation {

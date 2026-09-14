@@ -539,6 +539,9 @@ export default function MaCarvalhoApp() {
               inventory={inventoryItems}
               equipment={equipment}
               processes={productionProcesses}
+              onAddProcess={handleAddProcess}
+              onUpdateProcess={handleUpdateProcess}
+              onDeleteProcess={handleDeleteProcess}
               onAddEquipment={handleAddEquipment}
               onUpdateEquipment={handleUpdateEquipment}
               onDeleteEquipment={handleDeleteEquipment}
