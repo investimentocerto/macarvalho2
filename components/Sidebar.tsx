@@ -12,7 +12,6 @@ import {
   ClipboardList, 
   X,
   Sparkles,
-  Factory,
   Calculator
 } from 'lucide-react';
 
@@ -41,7 +40,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-5 h-5" /> },
     { id: 'produtos', label: 'Produtos', icon: <Package className="w-5 h-5" /> },
     { id: 'bom', label: 'Estrutura (BOM)', icon: <GitFork className="w-5 h-5" /> },
-    { id: 'processos', label: 'Processos Produtivos', icon: <Factory className="w-5 h-5" /> },
     { 
       id: 'estoque', 
       label: 'Controle de Estoque', 

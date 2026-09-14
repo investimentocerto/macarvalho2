@@ -2,7 +2,6 @@ export type ViewMode =
   | 'dashboard'
   | 'produtos'
   | 'bom'
-  | 'processos'
   | 'estoque'
   | 'compras'
   | 'vendas'
@@ -128,8 +127,13 @@ export interface ProductionEntry {
   quantityProduced: number;
   startedAt?: string;
   endedAt?: string;
+  hoursWorked?: number;
   entryDate: string;
   employeeId?: string;
+  employeeName?: string;
+  hourlyCostSnapshot?: number;
+  modCost?: number;
+  notes?: string;
 }
 
 export interface ProductionMaterialSeparation {
@@ -147,6 +151,7 @@ export interface Equipment {
   id: string;
   code: string;
   name: string;
+  description?: string;
   processId: string;
   acquisitionCost: number;
   residualValue: number;
@@ -161,6 +166,37 @@ export interface Equipment {
 
 export type CostLaborType = 'DIRETA' | 'INDIRETA';
 export type CostApportionmentStatus = 'NAO_APURADO' | 'EM_CALCULO' | 'APURADO' | 'FECHADO' | 'REABERTO';
+export type CostDriverType = 'HORAS_PRODUTIVAS' | 'QUANTIDADE_PRODUZIDA' | 'QUANTIDADE_OPS' | 'CUSTO_MOD';
+
+export interface CostSector {
+  id: string;
+  code: string;
+  name: string;
+  costCenterId: string;
+  active: boolean;
+  operationType?: string;
+  standardTimeMinutes?: number;
+  description?: string;
+  createdAt?: string;
+}
+
+export type ManufacturingProcessItem = CostSector;
+
+export interface CostEmployeeChargeDetail {
+  chargeId: string;
+  code: string;
+  description: string;
+  percent: number;
+  baseAmount: number;
+  calculatedAmount: number;
+  chargeType: string;
+}
+
+export interface CostBenefitItem {
+  id: string;
+  name: string;
+  amount: number;
+}
 
 export interface CostEmployee {
   id: string;
@@ -168,18 +204,49 @@ export interface CostEmployee {
   name: string;
   role: string;
   sector: string;
-  processId?: string;
+  sectorId?: string;
+  processId?: string; // Foreign key to production_processes / Centro de Custo
+  costCenterId?: string;
+  costCenterCode?: string;
+  costCenterDescription?: string;
   laborType: CostLaborType;
   baseSalary: number;
   additions: number;
   benefits: number;
-  chargePercent: number;
+  benefitsDetail?: CostBenefitItem[];
+  chargePercent: number; // Percentual consolidado calculado automaticamente
+  totalChargesAmount?: number; // Total em R$ dos encargos calculados
+  totalMonthlyCost?: number; // Salário Base + Encargos + Benefícios
+  chargesDetail?: CostEmployeeChargeDetail[]; // Composição individual item a item
+  selectedChargeIds?: string[]; // IDs dos encargos selecionados
   monthlyHours: number;
   productiveHours: number;
-  hourlyCost: number;
+  hourlyCost: number; // totalMonthlyCost / productiveHours
   validFrom?: string;
   validUntil?: string;
   active: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CostEmployeeHistory {
+  id: string;
+  employeeId: string;
+  competenceDate: string;
+  baseSalary: number;
+  benefits: number;
+  totalChargesAmount: number;
+  totalMonthlyCost: number;
+  productiveHours: number;
+  hourlyCost: number;
+  laborType: CostLaborType;
+  sectorId?: string;
+  sectorName?: string;
+  processId?: string;
+  costCenterCode?: string;
+  chargesDetail?: CostEmployeeChargeDetail[];
+  benefitsDetail?: CostBenefitItem[];
+  createdAt?: string;
 }
 
 export interface CostCharge {
@@ -248,6 +315,33 @@ export interface CostOperationStep {
   maintenanceCost: number;
   depreciationCost: number;
   totalCost: number;
+  equipmentId?: string;
+  equipmentName?: string;
+  costCenterCode?: string;
+  costCenterName?: string;
+}
+
+export interface CostMoiAllocation {
+  costCenterId: string;
+  costCenterCode: string;
+  costCenterName: string;
+  totalMoiCost: number;
+  driverType: CostDriverType;
+  driverUnit: string;
+  totalDriverVolume: number;
+  ratePerUnit: number;
+  opDriverVolume: number;
+  allocatedAmount: number;
+}
+
+export interface LaborCostBarSummary {
+  totalGoodBars: number;
+  totalDirectLabor: number;
+  totalIndirectLabor: number;
+  totalLaborCost: number;
+  directLaborPerBar: number;
+  indirectLaborPerBar: number;
+  totalLaborPerBar: number;
 }
 
 export interface CostOperation {
@@ -273,6 +367,11 @@ export interface CostOperation {
   closedAt?: string;
   items: CostOperationItem[];
   steps: CostOperationStep[];
+  moiAllocations?: CostMoiAllocation[];
+  goodBarsQuantity?: number;
+  modPerBar?: number;
+  moiPerBar?: number;
+  totalLaborPerBar?: number;
 }
 
 export interface SaleRecord {

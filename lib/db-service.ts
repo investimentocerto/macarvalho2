@@ -11,7 +11,9 @@ import {
   SaleRecord,
   ProductionProcess,
   Equipment,
+  CostSector,
   CostEmployee,
+  CostEmployeeHistory,
   CostCharge,
   CostDriver,
   IndirectCost,
@@ -210,7 +212,7 @@ export const dbService = {
     return !error;
   },
 
-  // LANÇAMENTOS DE PRODUÇÃO POR ETAPA
+  // LANÇAMENTOS DE PRODUÇÃO POR ETAPA E APONTAMENTO DE MOD
   async fetchProductionEntries(): Promise<ProductionEntry[] | null> {
     const supabase = getSupabaseClient();
     if (!supabase || !isSupabaseConfigured()) return null;
@@ -228,23 +230,67 @@ export const dbService = {
       endedAt: row.ended_at || undefined,
       entryDate: row.entry_date,
       employeeId: row.employee_id || undefined,
+      employeeName: row.employee_name || undefined,
+      hoursWorked: row.hours_worked !== undefined && row.hours_worked !== null ? Number(row.hours_worked) : undefined,
+      hourlyCostSnapshot: row.hourly_cost_snapshot !== undefined && row.hourly_cost_snapshot !== null ? Number(row.hourly_cost_snapshot) : undefined,
+      modCost: row.mod_cost !== undefined && row.mod_cost !== null ? Number(row.mod_cost) : undefined,
+      notes: row.notes || undefined,
     }));
   },
 
   async saveProductionEntry(entry: ProductionEntry): Promise<boolean> {
     const supabase = getSupabaseClient();
     if (!supabase || !isSupabaseConfigured()) return false;
-    const { error } = await supabase.from('production_entries').upsert({
+
+    // Tentar salvar com todas as colunas de MOD
+    const payload: any = {
       id: entry.id,
       order_id: entry.orderId,
       step_id: entry.stepId,
       quantity_produced: entry.quantityProduced,
-      started_at: entry.startedAt,
-      ended_at: entry.endedAt,
+      started_at: entry.startedAt || null,
+      ended_at: entry.endedAt || null,
       entry_date: entry.entryDate,
-      employee_id: entry.employeeId,
-    });
-    return !error;
+      employee_id: entry.employeeId || null,
+      employee_name: entry.employeeName || null,
+      hours_worked: entry.hoursWorked || 0,
+      hourly_cost_snapshot: entry.hourlyCostSnapshot || 0,
+      mod_cost: entry.modCost || 0,
+      notes: entry.notes || null,
+    };
+
+    const { error } = await supabase.from('production_entries').upsert(payload);
+    if (error) {
+      console.warn('Tentativa com colunas MOD falhou, tentando schema básico:', error.message);
+      // Fallback para caso as colunas novas ainda não tenham sido criadas no Supabase
+      const basicPayload: any = {
+        id: entry.id,
+        order_id: entry.orderId,
+        step_id: entry.stepId,
+        quantity_produced: entry.quantityProduced,
+        started_at: entry.startedAt || null,
+        ended_at: entry.endedAt || null,
+        entry_date: entry.entryDate,
+        employee_id: entry.employeeId || null,
+      };
+      const basicRes = await supabase.from('production_entries').upsert(basicPayload);
+      if (basicRes.error) {
+        console.error('Erro ao salvar lançamento de produção no Supabase:', basicRes.error.message);
+        return false;
+      }
+    }
+    return true;
+  },
+
+  async deleteProductionEntry(id: string): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return false;
+    const { error } = await supabase.from('production_entries').delete().eq('id', id);
+    if (error) {
+      console.error('Erro ao excluir lançamento de produção:', error.message);
+      return false;
+    }
+    return true;
   },
 
   async fetchProductionMaterialSeparations(): Promise<ProductionMaterialSeparation[] | null> {
@@ -586,7 +632,10 @@ export const dbService = {
     if (!supabase || !isSupabaseConfigured()) return true;
 
     const { error } = await supabase.from('production_processes').delete().eq('id', id);
-    return !error;
+    if (error) {
+      console.warn('Erro ao excluir processo no Supabase:', error.message);
+    }
+    return true;
   },
 
   // EQUIPAMENTOS VINCULADOS A CENTROS DE CUSTO
@@ -611,6 +660,7 @@ export const dbService = {
       id: row.id,
       code: row.code,
       name: row.name,
+      description: row.description || '',
       processId: row.process_id,
       acquisitionCost: Number(row.acquisition_cost || 0),
       residualValue: Number(row.residual_value || 0),
@@ -637,10 +687,11 @@ export const dbService = {
 
     const supabase = getSupabaseClient();
     if (!supabase || !isSupabaseConfigured()) return true;
-    const { error } = await supabase.from('equipment').upsert({
+    const payload: any = {
       id: equipment.id,
       code: equipment.code,
       name: equipment.name,
+      description: equipment.description || null,
       process_id: equipment.processId,
       acquisition_cost: equipment.acquisitionCost,
       residual_value: equipment.residualValue,
@@ -651,7 +702,13 @@ export const dbService = {
       other_cost_per_hour: equipment.otherCostPerHour || 0,
       productive_hours_available: equipment.productiveHoursAvailable || 220,
       created_at: equipment.createdAt || new Date().toISOString(),
-    });
+    };
+    let { error } = await supabase.from('equipment').upsert(payload);
+    if (error && error.message && error.message.toLowerCase().includes('description')) {
+      delete payload.description;
+      const retry = await supabase.from('equipment').upsert(payload);
+      error = retry.error;
+    }
     return !error;
   },
 
@@ -671,61 +728,519 @@ export const dbService = {
     return !error;
   },
 
-  // INDUSTRIAL COSTS
-  async fetchCostEmployees(): Promise<CostEmployee[] | null> {
+  // INDUSTRIAL COSTS: SETORES VINCULADOS A CENTROS DE CUSTO
+  async fetchCostSectors(): Promise<CostSector[] | null> {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('macarvalho_cost_sectors');
+        if (stored) {
+          const list = JSON.parse(stored);
+          if (Array.isArray(list) && list.length > 0) return list;
+        }
+      } catch (e) {
+        console.warn('Erro ao ler setores do localStorage:', e);
+      }
+    }
+
+    const defaultManufacturingProcesses: CostSector[] = [
+      {
+        id: 'proc-fab-001',
+        code: 'PROC-MIST',
+        name: 'Mistura & Homogeneização em Tacho',
+        costCenterId: 'proc-cc-001',
+        active: true,
+        operationType: 'Semiautomática',
+        standardTimeMinutes: 45,
+        description: 'Mistura e homogeneização das matérias-primas na temperatura controlada',
+      },
+      {
+        id: 'proc-fab-002',
+        code: 'PROC-ENV',
+        name: 'Envase & Fechamento Automático',
+        costCenterId: 'proc-cc-002',
+        active: true,
+        operationType: 'Automatizada',
+        standardTimeMinutes: 30,
+        description: 'Linha de envase contínuo, selagem térmica e tampamento de embalagens',
+      },
+      {
+        id: 'proc-fab-003',
+        code: 'PROC-ROT',
+        name: 'Rotulagem & Codificação de Lote',
+        costCenterId: 'proc-cc-002',
+        active: true,
+        operationType: 'Automatizada',
+        standardTimeMinutes: 20,
+        description: 'Aplicação de rótulo adesivo e impressão de data de validade/lote',
+      },
+      {
+        id: 'proc-fab-004',
+        code: 'PROC-EMB',
+        name: 'Inspeção de Qualidade & Embalagem Final',
+        costCenterId: 'proc-cc-001',
+        active: true,
+        operationType: 'Manual',
+        standardTimeMinutes: 25,
+        description: 'Inspeção visual de conformidade, encaixotamento e paletização',
+      },
+    ];
+
     const supabase = getSupabaseClient();
-    if (!supabase || !isSupabaseConfigured()) return null;
-    const { data, error } = await supabase.from('cost_employees').select('*').order('name');
-    if (error) return null;
+    if (!supabase || !isSupabaseConfigured()) {
+      return defaultManufacturingProcesses;
+    }
+
+    const { data, error } = await supabase.from('cost_sectors').select('*').order('name');
+    if (error || !data || data.length === 0) {
+      return defaultManufacturingProcesses;
+    }
+
     return (data || []).map((row: any) => ({
-      id: row.id, code: row.code, name: row.name, role: row.role, sector: row.sector,
-      processId: row.process_id || undefined, laborType: row.labor_type,
-      baseSalary: Number(row.base_salary || 0), additions: Number(row.additions || 0), benefits: Number(row.benefits || 0),
-      chargePercent: Number(row.charge_percent || 0), monthlyHours: Number(row.monthly_hours || 0), productiveHours: Number(row.productive_hours || 0), hourlyCost: Number(row.hourly_cost || 0),
-      validFrom: row.valid_from || undefined, validUntil: row.valid_until || undefined, active: row.active !== false,
+      id: row.id,
+      code: row.code,
+      name: row.name,
+      costCenterId: row.cost_center_id,
+      active: row.active !== false,
+      operationType: row.operation_type || row.operationType || 'Semiautomática',
+      standardTimeMinutes: Number(row.standard_time_minutes || row.standardTimeMinutes || 0),
+      description: row.description || '',
+      createdAt: row.created_at,
     }));
   },
 
-  async saveCostEmployee(employee: CostEmployee): Promise<boolean> {
+  async saveCostSector(sector: CostSector): Promise<boolean> {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('macarvalho_cost_sectors');
+        const list: CostSector[] = stored ? JSON.parse(stored) : [];
+        const index = list.findIndex((s) => s.id === sector.id);
+        if (index >= 0) list[index] = sector; else list.push(sector);
+        localStorage.setItem('macarvalho_cost_sectors', JSON.stringify(list));
+      } catch (e) {
+        console.warn('Erro ao salvar processo de fabricação no localStorage:', e);
+      }
+    }
+
     const supabase = getSupabaseClient();
-    if (!supabase || !isSupabaseConfigured()) return false;
-    const { error } = await supabase.from('cost_employees').upsert({
-      id: employee.id, code: employee.code, name: employee.name, role: employee.role, sector: employee.sector,
-      process_id: employee.processId, labor_type: employee.laborType, base_salary: employee.baseSalary, additions: employee.additions,
-      benefits: employee.benefits, charge_percent: employee.chargePercent, monthly_hours: employee.monthlyHours,
-      productive_hours: employee.productiveHours, hourly_cost: employee.hourlyCost, valid_from: employee.validFrom,
-      valid_until: employee.validUntil, active: employee.active, updated_at: new Date().toISOString(),
+    if (!supabase || !isSupabaseConfigured()) return true;
+
+    const { error } = await supabase.from('cost_sectors').upsert({
+      id: sector.id,
+      code: sector.code,
+      name: sector.name,
+      cost_center_id: sector.costCenterId,
+      active: sector.active,
+      operation_type: sector.operationType,
+      standard_time_minutes: sector.standardTimeMinutes,
+      description: sector.description,
+      created_at: sector.createdAt || new Date().toISOString(),
+    });
+
+    return !error;
+  },
+
+  async deleteCostSector(id: string): Promise<boolean> {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('macarvalho_cost_sectors');
+        if (stored) {
+          const list: CostSector[] = JSON.parse(stored);
+          localStorage.setItem('macarvalho_cost_sectors', JSON.stringify(list.filter((s) => s.id !== id)));
+        }
+      } catch (e) {
+        console.warn('Erro ao remover setor do localStorage:', e);
+      }
+    }
+
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return true;
+    const { error } = await supabase.from('cost_sectors').delete().eq('id', id);
+    return !error;
+  },
+
+  // INDUSTRIAL COSTS: COLABORADORES COM COMPOSIÇÃO DE CUSTO REAL
+  async fetchCostEmployees(): Promise<CostEmployee[] | null> {
+    let localEmployees: CostEmployee[] | null = null;
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('macarvalho_cost_employees');
+        if (stored) localEmployees = JSON.parse(stored);
+      } catch (e) {
+        console.warn('Erro ao carregar colaboradores do localStorage:', e);
+      }
+    }
+
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) {
+      return localEmployees || [];
+    }
+
+    const { data, error } = await supabase.from('cost_employees').select('*').order('name');
+    if (error || !data) {
+      return localEmployees;
+    }
+
+    // Carregar os encargos vinculados da tabela join N:N
+    let employeeChargesMap = new Map<string, string[]>();
+    try {
+      const { data: chargesRel } = await supabase.from('cost_employee_charges').select('employee_id, charge_id');
+      if (chargesRel) {
+        for (const rel of chargesRel) {
+          const existing = employeeChargesMap.get(rel.employee_id) || [];
+          existing.push(rel.charge_id);
+          employeeChargesMap.set(rel.employee_id, existing);
+        }
+      }
+    } catch {
+      // Falha silenciosa se a migration N:N ainda não foi executada
+    }
+
+    return (data || []).map((row: any) => {
+      const selectedChargeIds = row.selected_charge_ids || employeeChargesMap.get(row.id) || [];
+      const chargesDetail = Array.isArray(row.charges_detail) ? row.charges_detail : [];
+      const benefitsDetail = Array.isArray(row.benefits_detail) ? row.benefits_detail : [];
+
+      const baseSalary = Number(row.base_salary || 0);
+      const additions = Number(row.additions || 0);
+      const benefits = Number(row.benefits || 0);
+      const chargePercent = Number(row.charge_percent || 0);
+      const productiveHours = Number(row.productive_hours || 0);
+
+      const totalChargesAmount = Number(row.total_charges_amount || ((baseSalary + additions) * chargePercent) / 100);
+      const totalMonthlyCost = Number(row.total_monthly_cost || (baseSalary + additions + totalChargesAmount + benefits));
+      const hourlyCost = Number(row.hourly_cost || (productiveHours > 0 ? totalMonthlyCost / productiveHours : 0));
+
+      return {
+        id: row.id,
+        code: row.code,
+        name: row.name,
+        role: row.role || '',
+        sector: row.sector || '',
+        sectorId: row.sector_id || undefined,
+        processId: row.process_id || row.cost_center_id || undefined,
+        costCenterId: row.cost_center_id || row.process_id || undefined,
+        laborType: row.labor_type,
+        baseSalary,
+        additions,
+        benefits,
+        benefitsDetail,
+        chargePercent,
+        totalChargesAmount,
+        totalMonthlyCost,
+        chargesDetail,
+        selectedChargeIds,
+        monthlyHours: Number(row.monthly_hours || 0),
+        productiveHours,
+        hourlyCost,
+        validFrom: row.valid_from || undefined,
+        validUntil: row.valid_until || undefined,
+        active: row.active !== false,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    });
+  },
+
+  async saveCostEmployee(employee: CostEmployee): Promise<boolean> {
+    // 1. Salvar no localStorage para fallback instantâneo
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('macarvalho_cost_employees');
+        const list: CostEmployee[] = stored ? JSON.parse(stored) : [];
+        const index = list.findIndex((e) => e.id === employee.id);
+        if (index >= 0) list[index] = employee; else list.push(employee);
+        localStorage.setItem('macarvalho_cost_employees', JSON.stringify(list));
+      } catch (e) {
+        console.warn('Erro ao salvar colaborador no localStorage:', e);
+      }
+    }
+
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return true;
+
+    // 2. Persistência no Supabase
+    const payload: Record<string, any> = {
+      id: employee.id,
+      code: employee.code,
+      name: employee.name,
+      role: employee.role,
+      sector: employee.sector,
+      sector_id: employee.sectorId || null,
+      process_id: employee.processId || employee.costCenterId || null,
+      cost_center_id: employee.costCenterId || employee.processId || null,
+      labor_type: employee.laborType,
+      base_salary: employee.baseSalary,
+      additions: employee.additions || 0,
+      benefits: employee.benefits || 0,
+      charge_percent: employee.chargePercent || 0,
+      total_charges_amount: employee.totalChargesAmount || 0,
+      total_monthly_cost: employee.totalMonthlyCost || 0,
+      charges_detail: employee.chargesDetail || [],
+      benefits_detail: employee.benefitsDetail || [],
+      selected_charge_ids: employee.selectedChargeIds || [],
+      monthly_hours: employee.monthlyHours || 0,
+      productive_hours: employee.productiveHours || 0,
+      hourly_cost: employee.hourlyCost || 0,
+      valid_from: employee.validFrom || null,
+      valid_until: employee.validUntil || null,
+      active: employee.active !== false,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase.from('cost_employees').upsert(payload);
+    if (error) {
+      console.warn('Aviso ao salvar cost_employees (tentando fallback retrocompatível):', error.message);
+      // Fallback caso colunas adicionadas ainda não tenham sido migradas
+      const simplePayload = {
+        id: employee.id,
+        code: employee.code,
+        name: employee.name,
+        role: employee.role,
+        sector: employee.sector,
+        process_id: employee.processId || employee.costCenterId || null,
+        labor_type: employee.laborType,
+        base_salary: employee.baseSalary,
+        additions: employee.additions || 0,
+        benefits: employee.benefits || 0,
+        charge_percent: employee.chargePercent || 0,
+        monthly_hours: employee.monthlyHours || 0,
+        productive_hours: employee.productiveHours || 0,
+        hourly_cost: employee.hourlyCost || 0,
+        valid_from: employee.validFrom || null,
+        valid_until: employee.validUntil || null,
+        active: employee.active !== false,
+        updated_at: new Date().toISOString(),
+      };
+      await supabase.from('cost_employees').upsert(simplePayload);
+    }
+
+    // 3. Atualizar relacionamento N:N na tabela cost_employee_charges
+    try {
+      await supabase.from('cost_employee_charges').delete().eq('employee_id', employee.id);
+      if (employee.selectedChargeIds && employee.selectedChargeIds.length > 0) {
+        const relations = employee.selectedChargeIds.map((chargeId) => ({
+          id: `${employee.id}-${chargeId}`,
+          employee_id: employee.id,
+          charge_id: chargeId,
+          created_at: new Date().toISOString(),
+        }));
+        await supabase.from('cost_employee_charges').insert(relations);
+      }
+    } catch {
+      // Silencioso se tabela ainda não criada
+    }
+
+    // 4. Registrar no Histórico de Competência para não sobrescrever histórico de custos
+    try {
+      await supabase.from('cost_employee_history').insert({
+        id: `hist-${employee.id}-${Date.now()}`,
+        employee_id: employee.id,
+        competence_date: new Date().toISOString().slice(0, 10),
+        base_salary: employee.baseSalary,
+        benefits: employee.benefits,
+        total_charges_amount: employee.totalChargesAmount || 0,
+        total_monthly_cost: employee.totalMonthlyCost || 0,
+        productive_hours: employee.productiveHours,
+        hourly_cost: employee.hourlyCost,
+        labor_type: employee.laborType,
+        sector_id: employee.sectorId || null,
+        process_id: employee.processId || employee.costCenterId || null,
+        charges_detail: employee.chargesDetail || [],
+        benefits_detail: employee.benefitsDetail || [],
+        created_at: new Date().toISOString(),
+      });
+    } catch {
+      // Silencioso se histórico opcional
+    }
+
+    return true;
+  },
+
+  async deleteCostEmployee(id: string): Promise<boolean> {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('macarvalho_cost_employees');
+        if (stored) {
+          const list: CostEmployee[] = JSON.parse(stored);
+          localStorage.setItem('macarvalho_cost_employees', JSON.stringify(list.filter((e) => e.id !== id)));
+        }
+      } catch (e) {
+        console.warn('Erro ao remover colaborador do localStorage:', e);
+      }
+    }
+
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return true;
+
+    await supabase.from('cost_employee_charges').delete().eq('employee_id', id);
+    const { error } = await supabase.from('cost_employees').delete().eq('id', id);
+    return !error;
+  },
+
+  async fetchCostEmployeeHistory(employeeId?: string): Promise<CostEmployeeHistory[]> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return [];
+
+    let query = supabase.from('cost_employee_history').select('*').order('created_at', { ascending: false });
+    if (employeeId) {
+      query = query.eq('employee_id', employeeId);
+    }
+
+    const { data, error } = await query;
+    if (error || !data) return [];
+
+    return data.map((row: any) => ({
+      id: row.id,
+      employeeId: row.employee_id,
+      competenceDate: row.competence_date,
+      baseSalary: Number(row.base_salary || 0),
+      benefits: Number(row.benefits || 0),
+      totalChargesAmount: Number(row.total_charges_amount || 0),
+      totalMonthlyCost: Number(row.total_monthly_cost || 0),
+      productiveHours: Number(row.productive_hours || 0),
+      hourlyCost: Number(row.hourly_cost || 0),
+      laborType: row.labor_type,
+      sectorId: row.sector_id,
+      processId: row.process_id,
+      chargesDetail: Array.isArray(row.charges_detail) ? row.charges_detail : [],
+      benefitsDetail: Array.isArray(row.benefits_detail) ? row.benefits_detail : [],
+      createdAt: row.created_at,
+    }));
+  },
+
+  // INDUSTRIAL COSTS: ENCARGOS TRABALHISTAS & PROVISÕES
+  async fetchCostCharges(): Promise<CostCharge[] | null> {
+    const defaultCharges: CostCharge[] = [
+      { id: 'chg-inss', code: 'INSS', description: 'INSS Patronal (Previdência)', percent: 20.00, chargeType: 'ENCARGO', active: true },
+      { id: 'chg-fgts', code: 'FGTS', description: 'FGTS (Fundo de Garantia)', percent: 8.00, chargeType: 'ENCARGO', active: true },
+      { id: 'chg-rat', code: 'RAT', description: 'RAT / Riscos Ambientais do Trabalho', percent: 3.00, chargeType: 'ENCARGO', active: true },
+      { id: 'chg-saledu', code: 'SAL-EDU', description: 'Salário-Educação', percent: 2.50, chargeType: 'ENCARGO', active: true },
+      { id: 'chg-senai', code: 'SENAI', description: 'SENAI (Serviço Nac. Aprendizagem)', percent: 1.00, chargeType: 'ENCARGO', active: true },
+      { id: 'chg-sesi', code: 'SESI', description: 'SESI (Serviço Social da Indústria)', percent: 1.50, chargeType: 'ENCARGO', active: true },
+      { id: 'chg-sebrae', code: 'SEBRAE', description: 'SEBRAE', percent: 0.60, chargeType: 'ENCARGO', active: true },
+      { id: 'chg-incra', code: 'INCRA', description: 'INCRA', percent: 0.20, chargeType: 'ENCARGO', active: true },
+      { id: 'chg-13', code: '13-SAL', description: 'Provisão 13º Salário', percent: 8.33, chargeType: 'PROVISAO', active: true },
+      { id: 'chg-ferias', code: 'FERIAS', description: 'Provisão Férias Constitucionais', percent: 8.33, chargeType: 'PROVISAO', active: true },
+      { id: 'chg-terco-ferias', code: '1/3-FERIAS', description: 'Provisão 1/3 de Férias', percent: 2.78, chargeType: 'PROVISAO', active: true },
+    ];
+
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('macarvalho_cost_charges');
+        if (stored) {
+          const list: CostCharge[] = JSON.parse(stored);
+          if (Array.isArray(list) && list.length > 0) return list;
+        }
+      } catch (e) {
+        console.warn('Erro ao ler encargos do localStorage:', e);
+      }
+    }
+
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) {
+      return defaultCharges;
+    }
+
+    const { data, error } = await supabase.from('cost_charges').select('*').order('code');
+    if (error || !data || data.length === 0) {
+      return defaultCharges;
+    }
+
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      code: row.code,
+      description: row.description,
+      percent: Number(row.percent || 0),
+      chargeType: row.charge_type,
+      validFrom: row.valid_from || undefined,
+      validUntil: row.valid_until || undefined,
+      active: row.active !== false,
+    }));
+  },
+
+  async saveCostCharge(charge: CostCharge): Promise<boolean> {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('macarvalho_cost_charges');
+        const list: CostCharge[] = stored ? JSON.parse(stored) : [];
+        const index = list.findIndex((c) => c.id === charge.id);
+        if (index >= 0) list[index] = charge; else list.push(charge);
+        localStorage.setItem('macarvalho_cost_charges', JSON.stringify(list));
+      } catch (e) {
+        console.warn('Erro ao salvar encargo no localStorage:', e);
+      }
+    }
+
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return true;
+
+    const { error } = await supabase.from('cost_charges').upsert({
+      id: charge.id,
+      code: charge.code,
+      description: charge.description,
+      percent: charge.percent,
+      charge_type: charge.chargeType,
+      valid_from: charge.validFrom,
+      valid_until: charge.validUntil,
+      active: charge.active,
     });
     return !error;
   },
 
-  async fetchCostCharges(): Promise<CostCharge[] | null> {
-    const supabase = getSupabaseClient();
-    if (!supabase || !isSupabaseConfigured()) return null;
-    const { data, error } = await supabase.from('cost_charges').select('*').order('code');
-    if (error) return null;
-    return (data || []).map((row: any) => ({ id: row.id, code: row.code, description: row.description, percent: Number(row.percent || 0), chargeType: row.charge_type, validFrom: row.valid_from || undefined, validUntil: row.valid_until || undefined, active: row.active !== false }));
-  },
+  async deleteCostCharge(id: string): Promise<boolean> {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('macarvalho_cost_charges');
+        if (stored) {
+          const list: CostCharge[] = JSON.parse(stored);
+          localStorage.setItem('macarvalho_cost_charges', JSON.stringify(list.filter((c) => c.id !== id)));
+        }
+      } catch (e) {
+        console.warn('Erro ao remover encargo do localStorage:', e);
+      }
+    }
 
-  async saveCostCharge(charge: CostCharge): Promise<boolean> {
     const supabase = getSupabaseClient();
-    if (!supabase || !isSupabaseConfigured()) return false;
-    const { error } = await supabase.from('cost_charges').upsert({ id: charge.id, code: charge.code, description: charge.description, percent: charge.percent, charge_type: charge.chargeType, valid_from: charge.validFrom, valid_until: charge.validUntil, active: charge.active });
+    if (!supabase || !isSupabaseConfigured()) return true;
+    const { error } = await supabase.from('cost_charges').delete().eq('id', id);
     return !error;
   },
 
   async fetchCostDrivers(): Promise<CostDriver[] | null> {
+    const defaultDrivers: CostDriver[] = [
+      { id: 'drv-horas-prod', code: 'DRV-HORAS', description: 'Horas Produtivas das OPs', driverType: 'HORAS_PRODUTIVAS', unit: 'Horas (h)', active: true },
+      { id: 'drv-qtd-prod', code: 'DRV-QTD', description: 'Quantidade de Barras Produzidas', driverType: 'QUANTIDADE_PRODUZIDA', unit: 'Barras', active: true },
+      { id: 'drv-qtd-ops', code: 'DRV-OPS', description: 'Quantidade de Ordens de Produção', driverType: 'QUANTIDADE_OPS', unit: 'OPs', active: true },
+      { id: 'drv-custo-mod', code: 'DRV-MOD', description: 'Proporcional ao Custo de MOD', driverType: 'CUSTO_MOD', unit: 'R$', active: true },
+    ];
+
     const supabase = getSupabaseClient();
-    if (!supabase || !isSupabaseConfigured()) return null;
+    if (!supabase || !isSupabaseConfigured()) return defaultDrivers;
+
     const { data, error } = await supabase.from('cost_drivers').select('*').order('code');
-    if (error) return null;
-    return (data || []).map((row: any) => ({ id: row.id, code: row.code, description: row.description, driverType: row.driver_type, unit: row.unit, active: row.active !== false }));
+    if (error || !data || data.length === 0) return defaultDrivers;
+
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      code: row.code,
+      description: row.description,
+      driverType: row.driver_type,
+      unit: row.unit,
+      active: row.active !== false,
+    }));
   },
 
   async saveCostDriver(driver: CostDriver): Promise<boolean> {
     const supabase = getSupabaseClient();
     if (!supabase || !isSupabaseConfigured()) return false;
-    const { error } = await supabase.from('cost_drivers').upsert({ id: driver.id, code: driver.code, description: driver.description, driver_type: driver.driverType, unit: driver.unit, active: driver.active });
+    const { error } = await supabase.from('cost_drivers').upsert({
+      id: driver.id,
+      code: driver.code,
+      description: driver.description,
+      driver_type: driver.driverType,
+      unit: driver.unit,
+      active: driver.active,
+    });
     return !error;
   },
 

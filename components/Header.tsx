@@ -17,7 +17,6 @@ const VIEW_TITLES: Record<ViewMode, string> = {
   dashboard: 'Dashboard',
   produtos: 'Produtos',
   bom: 'Estrutura (BOM)',
-  processos: 'Processos Produtivos',
   estoque: 'Controle de Estoque',
   compras: 'Compras',
   vendas: 'Vendas',

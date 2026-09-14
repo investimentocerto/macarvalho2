@@ -4,7 +4,8 @@ import React, { useState, useEffect } from 'react';
 import { 
   ViewMode, 
   Product, 
-  BOMComponent, 
+  BOMComponent,
+  CostSector, 
   ProcessStepItem, 
   InventoryItem, 
   StockMovement, 
@@ -13,7 +14,9 @@ import {
   ProductionMaterialSeparation,
   SaleRecord,
   ProductionProcess,
-  Equipment
+  Equipment,
+  CostEmployee,
+  CostCharge
 } from '@/lib/types';
 import { 
   INITIAL_PRODUCTS, 
@@ -31,7 +34,6 @@ import { Header } from '@/components/Header';
 import { DashboardView } from '@/components/DashboardView';
 import { ProductsView } from '@/components/ProductsView';
 import { BOMView } from '@/components/BOMView';
-import { ProductionProcessesView } from '@/components/ProductionProcessesView';
 import { InventoryView } from '@/components/InventoryView';
 import { OperationalViews } from '@/components/OperationalViews';
 import { IndustrialCostsView } from '@/components/IndustrialCostsView';
@@ -52,6 +54,7 @@ export default function MaCarvalhoApp() {
   const [bomComponents, setBomComponents] = useState<BOMComponent[]>(INITIAL_BOM_COMPONENTS);
   const [processSteps, setProcessSteps] = useState<ProcessStepItem[]>(INITIAL_PROCESS_STEPS);
   const [productionProcesses, setProductionProcesses] = useState<ProductionProcess[]>(INITIAL_PRODUCTION_PROCESSES);
+  const [manufacturingProcesses, setManufacturingProcesses] = useState<CostSector[]>([]);
   const [equipment, setEquipment] = useState<Equipment[]>(INITIAL_EQUIPMENT);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>(INITIAL_INVENTORY);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>(INITIAL_MOVEMENTS);
@@ -59,6 +62,8 @@ export default function MaCarvalhoApp() {
   const [productionEntries, setProductionEntries] = useState<ProductionEntry[]>([]);
   const [materialSeparations, setMaterialSeparations] = useState<ProductionMaterialSeparation[]>([]);
   const [salesRecords, setSalesRecords] = useState<SaleRecord[]>(INITIAL_SALES);
+  const [costEmployees, setCostEmployees] = useState<CostEmployee[]>([]);
+  const [costCharges, setCostCharges] = useState<CostCharge[]>([]);
 
   // Direct Image Modal State
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
@@ -77,6 +82,15 @@ export default function MaCarvalhoApp() {
     }, 3500);
   };
 
+  // Recarrega o cadastro de Processos de Fabricação ao abrir o roteiro,
+  // garantindo que novos cadastros feitos em Custos Industriais apareçam na seleção.
+  useEffect(() => {
+    if (currentView !== 'bom') return;
+    dbService.fetchCostSectors().then((items) => {
+      if (items) setManufacturingProcesses(items);
+    });
+  }, [currentView]);
+
   // Carregar dados remotos do Supabase ou localStorage
   useEffect(() => {
     // Sempre tentar carregar processos produtivos (mesmo offline/localStorage)
@@ -85,15 +99,24 @@ export default function MaCarvalhoApp() {
         setProductionProcesses(localProcs);
       }
     });
+    dbService.fetchCostSectors().then((items) => {
+      if (items && items.length > 0) setManufacturingProcesses(items);
+    });
     dbService.fetchEquipment().then((items) => {
       if (items && items.length > 0) setEquipment(items);
+    });
+    dbService.fetchCostEmployees().then((emps) => {
+      if (emps && emps.length > 0) setCostEmployees(emps);
+    });
+    dbService.fetchCostCharges().then((chgs) => {
+      if (chgs && chgs.length > 0) setCostCharges(chgs);
     });
 
     if (!isSupabaseConfigured()) return;
 
     const loadRemoteData = async () => {
       try {
-        const [remoteProds, remoteInv, remoteOps, remoteSales, remoteBom, remoteSteps, remoteMovements, remoteProcs, remoteEquipment, remoteEntries, remoteSeparations] = await Promise.all([
+        const [remoteProds, remoteInv, remoteOps, remoteSales, remoteBom, remoteSteps, remoteMovements, remoteProcs, remoteManufacturingProcesses, remoteEquipment, remoteEntries, remoteSeparations] = await Promise.all([
           dbService.fetchProducts(),
           dbService.fetchInventory(),
           dbService.fetchProductionOrders(),
@@ -102,6 +125,7 @@ export default function MaCarvalhoApp() {
           dbService.fetchProcessSteps(),
           dbService.fetchStockMovements(),
           dbService.fetchProductionProcesses(),
+          dbService.fetchCostSectors(),
           dbService.fetchEquipment(),
           dbService.fetchProductionEntries(),
           dbService.fetchProductionMaterialSeparations(),
@@ -118,6 +142,7 @@ export default function MaCarvalhoApp() {
         if (remoteSteps && remoteSteps.length > 0) setProcessSteps(remoteSteps);
         if (remoteMovements && remoteMovements.length > 0) setStockMovements(remoteMovements);
         if (remoteProcs && remoteProcs.length > 0) setProductionProcesses(remoteProcs);
+        if (remoteManufacturingProcesses && remoteManufacturingProcesses.length > 0) setManufacturingProcesses(remoteManufacturingProcesses);
         if (remoteEquipment && remoteEquipment.length > 0) setEquipment(remoteEquipment);
         if (remoteEntries && remoteEntries.length > 0) setProductionEntries(remoteEntries);
         if (remoteSeparations && remoteSeparations.length > 0) setMaterialSeparations(remoteSeparations);
@@ -388,7 +413,13 @@ export default function MaCarvalhoApp() {
 
   const handleAddProductionEntry = (entry: ProductionEntry) => {
     setProductionEntries((prev) => [entry, ...prev]);
-    dbService.saveProductionEntry(entry).catch(() => showNotification('Erro ao salvar lançamento de produção no banco.'));
+    dbService.saveProductionEntry(entry).catch(() => showNotification('Erro ao salvar apontamento no banco.'));
+  };
+
+  const handleDeleteProductionEntry = (id: string) => {
+    setProductionEntries((prev) => prev.filter((entry) => entry.id !== id));
+    dbService.deleteProductionEntry(id).catch(() => showNotification('Erro ao excluir apontamento no banco.'));
+    showNotification('Apontamento de produção excluído com sucesso.');
   };
 
   const handleAddMaterialSeparation = (separation: ProductionMaterialSeparation) => {
@@ -487,6 +518,7 @@ export default function MaCarvalhoApp() {
               processSteps={processSteps}
               inventoryItems={inventoryItems}
               productionProcesses={productionProcesses}
+              manufacturingProcesses={manufacturingProcesses}
               equipment={equipment}
               onAddComponent={handleAddBOMComponent}
               onUpdateComponent={handleUpdateBOMComponent}
@@ -498,20 +530,6 @@ export default function MaCarvalhoApp() {
               onNotify={showNotification}
               onSaveBOM={handleSaveBOM}
               onUpdateProduct={handleUpdateProduct}
-            />
-          )}
-
-          {currentView === 'processos' && (
-            <ProductionProcessesView
-              processes={productionProcesses}
-              onAddProcess={handleAddProcess}
-              onUpdateProcess={handleUpdateProcess}
-              onDeleteProcess={handleDeleteProcess}
-              equipment={equipment}
-              onAddEquipment={handleAddEquipment}
-              onUpdateEquipment={handleUpdateEquipment}
-              onDeleteEquipment={handleDeleteEquipment}
-              onNotify={showNotification}
             />
           )}
 
@@ -538,6 +556,12 @@ export default function MaCarvalhoApp() {
               inventory={inventoryItems}
               equipment={equipment}
               processes={productionProcesses}
+              onAddProcess={handleAddProcess}
+              onUpdateProcess={handleUpdateProcess}
+              onDeleteProcess={handleDeleteProcess}
+              onAddEquipment={handleAddEquipment}
+              onUpdateEquipment={handleUpdateEquipment}
+              onDeleteEquipment={handleDeleteEquipment}
               onCloseOrder={handleCloseProductionOrder}
               onNotify={showNotification}
             />
@@ -555,6 +579,9 @@ export default function MaCarvalhoApp() {
               processSteps={processSteps}
               productionEntries={productionEntries}
               onAddProductionEntry={handleAddProductionEntry}
+              onDeleteProductionEntry={handleDeleteProductionEntry}
+              employees={costEmployees}
+              charges={costCharges}
               materialSeparations={materialSeparations}
               onAddMaterialSeparation={handleAddMaterialSeparation}
               inventoryItems={inventoryItems}
