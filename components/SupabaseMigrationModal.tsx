@@ -187,15 +187,33 @@ CREATE TABLE IF NOT EXISTS public.sales_records (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 8. Custos Industriais, Mão de Obra e Rateio
+-- 8. Custos Industriais, Mão de Obra e Rateio (Processos de Fabricação)
 CREATE TABLE IF NOT EXISTS public.cost_sectors (
     id TEXT PRIMARY KEY,
     code TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     cost_center_id TEXT REFERENCES public.production_processes(id),
     active BOOLEAN NOT NULL DEFAULT true,
+    operation_type TEXT,
+    standard_time_minutes NUMERIC DEFAULT 0,
+    description TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+ALTER TABLE public.cost_sectors ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE public.cost_sectors ADD COLUMN IF NOT EXISTS operation_type TEXT;
+ALTER TABLE public.cost_sectors ADD COLUMN IF NOT EXISTS standard_time_minutes NUMERIC DEFAULT 0;
+ALTER TABLE public.cost_sectors ADD COLUMN IF NOT EXISTS description TEXT;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'process_steps_process_id_fkey'
+  ) THEN
+    ALTER TABLE public.process_steps
+      ADD CONSTRAINT process_steps_process_id_fkey
+      FOREIGN KEY (process_id) REFERENCES public.cost_sectors(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS public.cost_charges (
     id TEXT PRIMARY KEY,
