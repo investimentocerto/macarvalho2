@@ -237,6 +237,7 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
     operationType: 'Semiautomática',
     standardTimeMinutes: '',
     description: '',
+    active: true,
   });
   const [processSearch, setProcessSearch] = useState('');
   const [processCostCenterFilter, setProcessCostCenterFilter] = useState('ALL');
@@ -806,7 +807,7 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
       code: processForm.code || `PROC-${String(sectors.length + 1).padStart(3, '0')}`,
       name: processForm.name.trim(),
       costCenterId: targetCC?.id || 'cc-geral',
-      active: true,
+      active: processForm.active !== undefined ? processForm.active : true,
       operationType: processForm.operationType || 'Semiautomática',
       standardTimeMinutes: processForm.standardTimeMinutes ? Number(processForm.standardTimeMinutes) : undefined,
       description: processForm.description.trim(),
@@ -834,6 +835,7 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
         operationType: 'Semiautomática',
         standardTimeMinutes: '',
         description: '',
+        active: true,
       });
 
       onNotify?.(
@@ -855,6 +857,7 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
       operationType: proc.operationType || 'Semiautomática',
       standardTimeMinutes: proc.standardTimeMinutes ? String(proc.standardTimeMinutes) : '',
       description: proc.description || '',
+      active: proc.active !== false,
     });
     const el = document.getElementById('form-manufacturing-process');
     el?.scrollIntoView({ behavior: 'smooth' });
@@ -869,11 +872,45 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
       operationType: 'Semiautomática',
       standardTimeMinutes: '',
       description: '',
+      active: true,
     });
   };
 
-  // Excluir Processo de Fabricação
+  // Alternar Status Ativo / Inativo de Processo
+  const handleToggleProcessActive = async (proc: CostSector) => {
+    const updated: CostSector = { ...proc, active: !proc.active };
+    const saved = await dbService.saveCostSector(updated);
+    if (saved) {
+      setSectors((current) => current.map((s) => (s.id === proc.id ? updated : s)));
+      onNotify?.(`Processo "${proc.name}" agora está ${updated.active ? 'Ativo' : 'Inativo'}.`);
+    }
+  };
+
+  // Excluir Processo de Fabricação (com validação de integridade do roteiro produtivo)
   const handleDeleteManufacturingProcess = (id: string, name: string) => {
+    const linkedStepsCount = steps.filter((s) => s.processId === id).length;
+    if (linkedStepsCount > 0) {
+      setGenericConfirmModal({
+        title: `Processo em Uso no Roteiro de Produção`,
+        description: `O processo "${name}" está vinculado a ${linkedStepsCount} etapa(s) de roteiro produtivo. Para não corromper o histórico e a rastreabilidade fabril, ele não deve ser excluído fisicamente, mas sim INATIVADO. Processos inativos não aparecem para novos roteiros, mas permanecem nos produtos existentes.`,
+        confirmLabel: 'Inativar Processo',
+        isDestructive: false,
+        onConfirm: async () => {
+          const target = sectors.find((s) => s.id === id);
+          if (target) {
+            const updated: CostSector = { ...target, active: false };
+            const saved = await dbService.saveCostSector(updated);
+            if (saved) {
+              setSectors((current) => current.map((s) => (s.id === id ? updated : s)));
+              onNotify?.(`Processo "${name}" foi inativado.`);
+            }
+          }
+          setGenericConfirmModal(null);
+        },
+      });
+      return;
+    }
+
     setGenericConfirmModal({
       title: `Remover Processo de Fabricação "${name}"?`,
       description: `Tem certeza que deseja remover este processo de fabricação do cadastro fabril?`,
@@ -2510,8 +2547,8 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
               </div>
 
               <form onSubmit={handleSaveManufacturingProcess} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                  <div>
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                  <div className="md:col-span-2">
                     <label className={labelClass}>Código do Processo</label>
                     <input
                       type="text"
@@ -2522,8 +2559,8 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                     />
                   </div>
 
-                  <div className="md:col-span-2">
-                    <label className={labelClass}>Descrição *</label>
+                  <div className="md:col-span-4">
+                    <label className={labelClass}>Descrição do Processo *</label>
                     <input
                       type="text"
                       required
@@ -2534,7 +2571,7 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                     />
                   </div>
 
-                  <div>
+                  <div className="md:col-span-4">
                     <label className={labelClass}>Centro de Custo Vinculado *</label>
                     <select
                       required
@@ -2548,6 +2585,18 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                           [{proc.code}] {proc.description}
                         </option>
                       ))}
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className={labelClass}>Status</label>
+                    <select
+                      value={processForm.active ? 'true' : 'false'}
+                      onChange={(e) => setProcessForm({ ...processForm, active: e.target.value === 'true' })}
+                      className={inputClass}
+                    >
+                      <option value="true">Ativo</option>
+                      <option value="false">Inativo</option>
                     </select>
                   </div>
                 </div>
@@ -2625,13 +2674,14 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                     <th className="p-3 text-left">Código</th>
                     <th className="p-3 text-left">Processo de Fabricação</th>
                     <th className="p-3 text-left">Centro de Custo Vinculado</th>
+                    <th className="p-3 text-center">Status</th>
                     <th className="p-3 text-center">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredManufacturingProcesses.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="p-8 text-center text-[#574335]">
+                      <td colSpan={5} className="p-8 text-center text-[#574335]">
                         <Workflow className="w-8 h-8 text-stone-300 mx-auto mb-2" />
                         <p className="font-semibold text-sm">Nenhum processo de fabricação encontrado</p>
                         <p className="text-xs text-stone-400 mt-0.5">
@@ -2673,6 +2723,21 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                             ) : (
                               <span className="text-stone-400 italic text-xs">Centro de Custo Geral</span>
                             )}
+                          </td>
+                          <td className="p-3 text-center whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleProcessActive(proc)}
+                              title={proc.active !== false ? 'Clique para inativar processo' : 'Clique para ativar processo'}
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold transition-all ${
+                                proc.active !== false
+                                  ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                                  : 'bg-stone-200 text-stone-600 hover:bg-stone-300'
+                              }`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${proc.active !== false ? 'bg-emerald-600' : 'bg-stone-500'}`} />
+                              {proc.active !== false ? 'Ativo' : 'Inativo'}
+                            </button>
                           </td>
                           <td className="p-3 text-center">
                             <div className="flex items-center justify-center gap-1">

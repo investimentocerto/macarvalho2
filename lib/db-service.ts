@@ -413,37 +413,69 @@ export const dbService = {
   // PROCESS STEPS
   async fetchProcessSteps(): Promise<ProcessStepItem[] | null> {
     const supabase = getSupabaseClient();
-    if (!supabase || !isSupabaseConfigured()) return null;
-
-    const { data, error } = await supabase.from('process_steps').select('*').order('step_number');
-    if (error) {
-      console.warn('Erro ao carregar etapas de roteiro do Supabase:', error.message);
-      return null;
+    if (supabase && isSupabaseConfigured()) {
+      const { data, error } = await supabase.from('process_steps').select('*').order('step_number');
+      if (!error && data) {
+        const mapped: ProcessStepItem[] = data.map((row: any) => ({
+          id: row.id,
+          productId: row.product_id || undefined,
+          stepNumber: row.step_number,
+          title: row.title,
+          cost: Number(row.cost || 0),
+          machine: row.machine,
+          line: row.line,
+          durationMinutes: row.duration_minutes,
+          durationFormatted: row.duration_formatted,
+          hourlyRateText: row.hourly_rate_text,
+          processId: row.process_id || undefined,
+          equipmentId: row.equipment_id || undefined,
+          costCenterCode: row.cost_center_code || undefined,
+          hourlyRate: row.hourly_rate !== null && row.hourly_rate !== undefined ? Number(row.hourly_rate) : undefined,
+          unitsPerHour: row.units_per_hour !== null && row.units_per_hour !== undefined ? Number(row.units_per_hour) : undefined,
+          laborQuantity: row.labor_quantity !== null && row.labor_quantity !== undefined ? Number(row.labor_quantity) : undefined,
+        }));
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('macarvalho_process_steps', JSON.stringify(mapped));
+          } catch (e) {
+            // ignore
+          }
+        }
+        return mapped;
+      }
+      console.warn('Erro ao carregar etapas de roteiro do Supabase:', error?.message);
     }
 
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      productId: row.product_id || undefined,
-      stepNumber: row.step_number,
-      title: row.title,
-      cost: Number(row.cost || 0),
-      machine: row.machine,
-      line: row.line,
-      durationMinutes: row.duration_minutes,
-      durationFormatted: row.duration_formatted,
-      hourlyRateText: row.hourly_rate_text,
-      processId: row.process_id || undefined,
-      equipmentId: row.equipment_id || undefined,
-      costCenterCode: row.cost_center_code || undefined,
-      hourlyRate: row.hourly_rate !== null && row.hourly_rate !== undefined ? Number(row.hourly_rate) : undefined,
-      unitsPerHour: row.units_per_hour !== null && row.units_per_hour !== undefined ? Number(row.units_per_hour) : undefined,
-      laborQuantity: row.labor_quantity !== null && row.labor_quantity !== undefined ? Number(row.labor_quantity) : undefined,
-    }));
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('macarvalho_process_steps');
+        if (stored) {
+          const list = JSON.parse(stored);
+          if (Array.isArray(list)) return list;
+        }
+      } catch (e) {
+        console.warn('Erro ao ler etapas do localStorage:', e);
+      }
+    }
+
+    return null;
   },
 
   async saveProcessStep(step: ProcessStepItem): Promise<boolean> {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('macarvalho_process_steps');
+        const list: ProcessStepItem[] = stored ? JSON.parse(stored) : [];
+        const index = list.findIndex((s) => s.id === step.id);
+        if (index >= 0) list[index] = step; else list.push(step);
+        localStorage.setItem('macarvalho_process_steps', JSON.stringify(list));
+      } catch (e) {
+        console.warn('Erro ao salvar etapa no localStorage:', e);
+      }
+    }
+
     const supabase = getSupabaseClient();
-    if (!supabase || !isSupabaseConfigured()) return false;
+    if (!supabase || !isSupabaseConfigured()) return true;
 
     const { error } = await supabase.from('process_steps').upsert({
       id: step.id,
@@ -470,6 +502,25 @@ export const dbService = {
     }
 
     return true;
+  },
+
+  async deleteProcessStep(id: string): Promise<boolean> {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('macarvalho_process_steps');
+        if (stored) {
+          const list: ProcessStepItem[] = JSON.parse(stored);
+          localStorage.setItem('macarvalho_process_steps', JSON.stringify(list.filter((s) => s.id !== id)));
+        }
+      } catch (e) {
+        console.warn('Erro ao remover etapa do roteiro no localStorage:', e);
+      }
+    }
+
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return true;
+    const { error } = await supabase.from('process_steps').delete().eq('id', id);
+    return !error;
   },
 
   // STOCK MOVEMENTS
@@ -728,8 +779,34 @@ export const dbService = {
     return !error;
   },
 
-  // INDUSTRIAL COSTS: SETORES VINCULADOS A CENTROS DE CUSTO
+  // INDUSTRIAL COSTS: SETORES VINCULADOS A CENTROS DE CUSTO (PROCESSOS DE FABRICAÇÃO)
   async fetchCostSectors(): Promise<CostSector[] | null> {
+    const supabase = getSupabaseClient();
+    if (supabase && isSupabaseConfigured()) {
+      const { data, error } = await supabase.from('cost_sectors').select('*').order('code');
+      if (!error && data && data.length > 0) {
+        const mapped: CostSector[] = data.map((row: any) => ({
+          id: row.id,
+          code: row.code,
+          name: row.name,
+          costCenterId: row.cost_center_id,
+          active: row.active !== false,
+          operationType: row.operation_type || row.operationType || 'Semiautomática',
+          standardTimeMinutes: Number(row.standard_time_minutes || row.standardTimeMinutes || 0),
+          description: row.description || '',
+          createdAt: row.created_at,
+        }));
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('macarvalho_cost_sectors', JSON.stringify(mapped));
+          } catch (e) {
+            // ignore
+          }
+        }
+        return mapped;
+      }
+    }
+
     if (typeof window !== 'undefined') {
       try {
         const stored = localStorage.getItem('macarvalho_cost_sectors');
@@ -745,7 +822,7 @@ export const dbService = {
     const defaultManufacturingProcesses: CostSector[] = [
       {
         id: 'proc-fab-001',
-        code: 'PROC-MIST',
+        code: '001',
         name: 'Mistura & Homogeneização em Tacho',
         costCenterId: 'proc-cc-001',
         active: true,
@@ -755,7 +832,7 @@ export const dbService = {
       },
       {
         id: 'proc-fab-002',
-        code: 'PROC-ENV',
+        code: '002',
         name: 'Envase & Fechamento Automático',
         costCenterId: 'proc-cc-002',
         active: true,
@@ -765,7 +842,7 @@ export const dbService = {
       },
       {
         id: 'proc-fab-003',
-        code: 'PROC-ROT',
+        code: '003',
         name: 'Rotulagem & Codificação de Lote',
         costCenterId: 'proc-cc-002',
         active: true,
@@ -775,7 +852,7 @@ export const dbService = {
       },
       {
         id: 'proc-fab-004',
-        code: 'PROC-EMB',
+        code: '004',
         name: 'Inspeção de Qualidade & Embalagem Final',
         costCenterId: 'proc-cc-001',
         active: true,
@@ -785,27 +862,7 @@ export const dbService = {
       },
     ];
 
-    const supabase = getSupabaseClient();
-    if (!supabase || !isSupabaseConfigured()) {
-      return defaultManufacturingProcesses;
-    }
-
-    const { data, error } = await supabase.from('cost_sectors').select('*').order('name');
-    if (error || !data || data.length === 0) {
-      return defaultManufacturingProcesses;
-    }
-
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      code: row.code,
-      name: row.name,
-      costCenterId: row.cost_center_id,
-      active: row.active !== false,
-      operationType: row.operation_type || row.operationType || 'Semiautomática',
-      standardTimeMinutes: Number(row.standard_time_minutes || row.standardTimeMinutes || 0),
-      description: row.description || '',
-      createdAt: row.created_at,
-    }));
+    return defaultManufacturingProcesses;
   },
 
   async saveCostSector(sector: CostSector): Promise<boolean> {
