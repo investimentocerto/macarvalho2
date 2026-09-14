@@ -249,6 +249,55 @@ export function calculateEquipmentDepreciation(
   return (monthly / productiveHours) * hours;
 }
 
+export function getEquipmentDepreciationDetails(
+  equipment: Pick<Equipment, 'acquisitionCost' | 'residualValue' | 'estimatedUsefulLife' | 'productiveHoursAvailable'>
+): {
+  depreciableValue: number;
+  monthlyDepreciation: number;
+  hourlyDepreciation: number;
+} {
+  const acquisitionCost = Math.max(0, Number(equipment.acquisitionCost) || 0);
+  const residualValue = Math.max(0, Number(equipment.residualValue) || 0);
+  const estimatedUsefulLife = Math.max(0, Number(equipment.estimatedUsefulLife) || 0);
+  const productiveHours = Math.max(1, Number(equipment.productiveHoursAvailable) || 220);
+
+  const depreciableValue = Math.max(0, acquisitionCost - residualValue);
+  const monthlyDepreciation = estimatedUsefulLife > 0 ? depreciableValue / estimatedUsefulLife / 12 : 0;
+  const hourlyDepreciation = (productiveHours > 0 && monthlyDepreciation > 0) ? monthlyDepreciation / productiveHours : 0;
+
+  return {
+    depreciableValue,
+    monthlyDepreciation,
+    hourlyDepreciation,
+  };
+}
+
+export function getEquipmentEnergyDetails(
+  equipment: Pick<Equipment, 'powerKw' | 'energyTariff' | 'productiveHoursAvailable'>
+): {
+  powerKw: number;
+  energyTariff: number;
+  hourlyEnergyCost: number;
+  estimatedMonthlyKwh: number;
+  estimatedMonthlyEnergyCost: number;
+} {
+  const powerKw = Math.max(0, Number(equipment.powerKw) || 0);
+  const energyTariff = Math.max(0, Number(equipment.energyTariff) || 0);
+  const productiveHours = Math.max(0, Number(equipment.productiveHoursAvailable) || 220);
+
+  const hourlyEnergyCost = powerKw * energyTariff;
+  const estimatedMonthlyKwh = powerKw * productiveHours;
+  const estimatedMonthlyEnergyCost = estimatedMonthlyKwh * energyTariff;
+
+  return {
+    powerKw,
+    energyTariff,
+    hourlyEnergyCost,
+    estimatedMonthlyKwh,
+    estimatedMonthlyEnergyCost,
+  };
+}
+
 export function calculateEnergyCost(
   equipment: Pick<Equipment, 'powerKw' | 'energyTariff'>,
   hours: number
@@ -486,12 +535,13 @@ export function calculateProductionOrderCost(inputs: ProductionCostInputs): Cost
       : manHours * hourlyRate;
 
     const machine = inputs.equipment.find((item) => item.id === step.equipmentId);
-    const equipmentCost = machine
-      ? calculateEquipmentDepreciation(machine, hours) +
-        calculateEnergyCost(machine, hours) +
-        calculateMaintenanceCost(machine, hours) +
-        (machine.otherCostPerHour || 0) * hours
-      : 0;
+    const stepDepreciation = machine ? calculateEquipmentDepreciation(machine, hours) : 0;
+    const stepEnergy = machine ? calculateEnergyCost(machine, hours) : 0;
+    const stepMaintenance = machine ? calculateMaintenanceCost(machine, hours) : 0;
+    const stepOtherEquipment = machine ? ((machine.otherCostPerHour || 0) * hours) : 0;
+
+    // Regra oficial: equipmentCost = depreciationCost + maintenanceCost + otherEquipmentCost (sem energia!)
+    const equipmentCost = stepDepreciation + stepMaintenance + stepOtherEquipment;
 
     steps.push({
       id: `step-cost-${entry.id}`,
@@ -500,17 +550,21 @@ export function calculateProductionOrderCost(inputs: ProductionCostInputs): Cost
       manHours,
       laborCost,
       equipmentCost,
-      energyCost: machine ? calculateEnergyCost(machine, hours) : 0,
-      maintenanceCost: machine ? calculateMaintenanceCost(machine, hours) : 0,
-      depreciationCost: machine ? calculateEquipmentDepreciation(machine, hours) : 0,
-      totalCost: laborCost + equipmentCost,
+      energyCost: stepEnergy,
+      maintenanceCost: stepMaintenance,
+      depreciationCost: stepDepreciation,
+      totalCost: laborCost + equipmentCost + stepEnergy,
     });
   }
 
   const directLaborCost = steps.reduce((sum, step) => sum + step.laborCost, 0);
-  const equipmentEnergy = steps.reduce((sum, step) => sum + step.energyCost, 0);
+  const energyCost = steps.reduce((sum, step) => sum + step.energyCost, 0);
   const maintenanceCost = steps.reduce((sum, step) => sum + step.maintenanceCost, 0);
   const depreciationCost = steps.reduce((sum, step) => sum + step.depreciationCost, 0);
+  const otherEquipmentCost = steps.reduce(
+    (sum, step) => sum + Math.max(0, step.equipmentCost - step.depreciationCost - step.maintenanceCost),
+    0
+  );
 
   // 2. Apuração de MOI Rateada por Direcionador Configurável (não dividida diretamente)
   const allOrders = inputs.orders && inputs.orders.length > 0 ? inputs.orders : [inputs.order];
@@ -525,9 +579,10 @@ export function calculateProductionOrderCost(inputs: ProductionCostInputs): Cost
   const indirectLaborCost = moiResult.orderAllocatedMoi;
 
   // 3. Outros custos indiretos (além de MOI)
-  const otherIndirectCost = (inputs.indirectCosts || [])
+  const baseIndirectCost = (inputs.indirectCosts || [])
     .filter((cost) => cost.active)
     .reduce((sum, cost) => sum + cost.amount, 0);
+  const otherIndirectCost = baseIndirectCost + otherEquipmentCost;
 
   // Quantidade de barras boas produzidas (etapa de embalagem / final)
   const packagingEntries = inputs.steps
@@ -540,7 +595,8 @@ export function calculateProductionOrderCost(inputs: ProductionCostInputs): Cost
   }
 
   const yieldData = calculateYield(inputs.order.quantity, goodBarsQuantity);
-  const totalCost = material.total + directLaborCost + indirectLaborCost + equipmentEnergy + maintenanceCost + depreciationCost + otherIndirectCost;
+  // Estrutura CIF: Materiais + MOD + MOI + Energia(CIF) + Manutenção(CIF) + Depreciação(CIF) + Outros CIF
+  const totalCost = material.total + directLaborCost + indirectLaborCost + energyCost + maintenanceCost + depreciationCost + otherIndirectCost;
   const unitCost = goodBarsQuantity > 0 ? totalCost / goodBarsQuantity : 0;
 
   // Indicador médio de mão de obra por barra
@@ -557,7 +613,7 @@ export function calculateProductionOrderCost(inputs: ProductionCostInputs): Cost
     materialCost: material.total,
     directLaborCost,
     indirectLaborCost,
-    energyCost: equipmentEnergy,
+    energyCost,
     maintenanceCost,
     depreciationCost,
     otherIndirectCost,

@@ -657,6 +657,7 @@ export const dbService = {
       id: row.id,
       code: row.code,
       name: row.name,
+      description: row.description || '',
       processId: row.process_id,
       acquisitionCost: Number(row.acquisition_cost || 0),
       residualValue: Number(row.residual_value || 0),
@@ -683,10 +684,11 @@ export const dbService = {
 
     const supabase = getSupabaseClient();
     if (!supabase || !isSupabaseConfigured()) return true;
-    const { error } = await supabase.from('equipment').upsert({
+    const payload: any = {
       id: equipment.id,
       code: equipment.code,
       name: equipment.name,
+      description: equipment.description || null,
       process_id: equipment.processId,
       acquisition_cost: equipment.acquisitionCost,
       residual_value: equipment.residualValue,
@@ -697,7 +699,13 @@ export const dbService = {
       other_cost_per_hour: equipment.otherCostPerHour || 0,
       productive_hours_available: equipment.productiveHoursAvailable || 220,
       created_at: equipment.createdAt || new Date().toISOString(),
-    });
+    };
+    let { error } = await supabase.from('equipment').upsert(payload);
+    if (error && error.message && error.message.toLowerCase().includes('description')) {
+      delete payload.description;
+      const retry = await supabase.from('equipment').upsert(payload);
+      error = retry.error;
+    }
     return !error;
   },
 

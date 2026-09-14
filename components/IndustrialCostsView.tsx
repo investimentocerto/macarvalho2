@@ -24,6 +24,11 @@ import {
   Square,
   Search,
   Filter,
+  Wrench,
+  Zap,
+  Eye,
+  X,
+  Cpu,
 } from 'lucide-react';
 import { dbService } from '@/lib/db-service';
 import {
@@ -32,6 +37,8 @@ import {
   calculateProductionOrderCost,
   formatCurrency,
   formatNumber,
+  getEquipmentDepreciationDetails,
+  getEquipmentEnergyDetails,
 } from '@/lib/industrial-costs';
 import {
   CostCharge,
@@ -61,6 +68,9 @@ interface IndustrialCostsViewProps {
   inventory: InventoryItem[];
   equipment: Equipment[];
   processes: ProductionProcess[];
+  onAddEquipment?: (equipment: Equipment) => void;
+  onUpdateEquipment?: (equipment: Equipment) => void;
+  onDeleteEquipment?: (id: string) => void;
   onCloseOrder?: (order: ProductionOrder, operation: CostOperation) => void;
   onNotify?: (message: string) => void;
 }
@@ -72,7 +82,6 @@ type Tab =
   | 'setores'
   | 'encargos'
   | 'equipamentos'
-  | 'depreciacao'
   | 'manutencao'
   | 'indiretos';
 
@@ -82,8 +91,7 @@ const tabs: [Tab, string, string][] = [
   ['setores', 'Setores', 'Vínculo de Setor a Centro de Custo'],
   ['encargos', 'Encargos & Provisões', 'Tabela oficial de encargos e provisões CLT'],
   ['ops', 'Ordens de Produção', 'Seleção de OPs para custeio'],
-  ['equipamentos', 'Equipamentos', 'Máquinas e potência'],
-  ['depreciacao', 'Depreciação', 'Vida útil e taxa de depreciação'],
+  ['equipamentos', 'Equipamentos', 'Cadastro centralizado de máquinas, depreciação CIF e energia CIF'],
   ['manutencao', 'Manutenção', 'Preventiva e corretiva'],
   ['indiretos', 'Custos Indiretos (CIF)', 'Outros custos de infraestrutura e fábrica'],
 ];
@@ -100,6 +108,9 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
   inventory,
   equipment,
   processes,
+  onAddEquipment,
+  onUpdateEquipment,
+  onDeleteEquipment,
   onCloseOrder,
   onNotify,
 }) => {
@@ -116,6 +127,36 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
   const [maintenance, setMaintenance] = useState<EquipmentMaintenance[]>([]);
   const [historyList, setHistoryList] = useState<CostEmployeeHistory[]>([]);
   const [historyModalEmployee, setHistoryModalEmployee] = useState<CostEmployee | null>(null);
+
+  // Equipamentos gerenciados na aba CUSTOS INDUSTRIAIS -> EQUIPAMENTOS
+  const [equipmentList, setEquipmentList] = useState<Equipment[]>(equipment || []);
+  const [prevEquipmentProp, setPrevEquipmentProp] = useState(equipment);
+
+  if (equipment !== prevEquipmentProp) {
+    setPrevEquipmentProp(equipment);
+    setEquipmentList(equipment || []);
+  }
+
+  const [equipmentSearch, setEquipmentSearch] = useState('');
+  const [equipmentProcessFilter, setEquipmentProcessFilter] = useState('');
+  const [isEquipmentModalOpen, setIsEquipmentModalOpen] = useState(false);
+  const [editingEquipmentId, setEditingEquipmentId] = useState<string | null>(null);
+  const [viewingEquipment, setViewingEquipment] = useState<Equipment | null>(null);
+
+  const [equipmentForm, setEquipmentForm] = useState({
+    code: '',
+    name: '',
+    description: '',
+    processId: processes[0]?.id || '',
+    acquisitionCost: '0',
+    residualValue: '0',
+    estimatedUsefulLife: '5',
+    productiveHoursAvailable: '220',
+    powerKw: '0',
+    energyTariff: '0.85',
+    maintenanceCostPerHour: '0',
+    otherCostPerHour: '0',
+  });
 
   // Filtro na listagem de colaboradores
   const [employeeSearch, setEmployeeSearch] = useState('');
@@ -240,7 +281,7 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
       separations,
       inventory,
       employees,
-      equipment,
+      equipment: equipmentList,
       processes,
       charges,
       indirectCosts,
@@ -259,6 +300,155 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
         )
       );
   };
+
+  // Cálculos em tempo real da aba/modal de Equipamentos
+  const liveEquipmentCalc = useMemo(() => {
+    const acq = Math.max(0, Number(equipmentForm.acquisitionCost) || 0);
+    const res = Math.max(0, Number(equipmentForm.residualValue) || 0);
+    const life = Math.max(0, Number(equipmentForm.estimatedUsefulLife) || 0);
+    const prodHours = Math.max(1, Number(equipmentForm.productiveHoursAvailable) || 220);
+    const power = Math.max(0, Number(equipmentForm.powerKw) || 0);
+    const tariff = Math.max(0, Number(equipmentForm.energyTariff) || 0);
+    const maint = Math.max(0, Number(equipmentForm.maintenanceCostPerHour) || 0);
+    const other = Math.max(0, Number(equipmentForm.otherCostPerHour) || 0);
+
+    const depr = getEquipmentDepreciationDetails({
+      acquisitionCost: acq,
+      residualValue: res,
+      estimatedUsefulLife: life,
+      productiveHoursAvailable: prodHours,
+    });
+
+    const energy = getEquipmentEnergyDetails({
+      powerKw: power,
+      energyTariff: tariff,
+      productiveHoursAvailable: prodHours,
+    });
+
+    // Custo operacional do equipamento por hora (sem energia, pois energia é CIF!)
+    const hourlyDirectEquipmentCost = depr.hourlyDepreciation + maint + other;
+
+    return {
+      ...depr,
+      ...energy,
+      hourlyDirectEquipmentCost,
+    };
+  }, [equipmentForm]);
+
+  // Handlers para o CRUD de Equipamentos
+  const handleOpenNewEquipment = () => {
+    setEditingEquipmentId(null);
+    setEquipmentForm({
+      code: '',
+      name: '',
+      description: '',
+      processId: processes[0]?.id || '',
+      acquisitionCost: '0',
+      residualValue: '0',
+      estimatedUsefulLife: '5',
+      productiveHoursAvailable: '220',
+      powerKw: '0',
+      energyTariff: '0.85',
+      maintenanceCostPerHour: '0',
+      otherCostPerHour: '0',
+    });
+    setIsEquipmentModalOpen(true);
+  };
+
+  const handleOpenEditEquipment = (eq: Equipment) => {
+    setEditingEquipmentId(eq.id);
+    setEquipmentForm({
+      code: eq.code,
+      name: eq.name,
+      description: eq.description || '',
+      processId: eq.processId,
+      acquisitionCost: String(eq.acquisitionCost || 0),
+      residualValue: String(eq.residualValue || 0),
+      estimatedUsefulLife: String(eq.estimatedUsefulLife || 5),
+      productiveHoursAvailable: String(eq.productiveHoursAvailable || 220),
+      powerKw: String(eq.powerKw || 0),
+      energyTariff: String(eq.energyTariff || 0.85),
+      maintenanceCostPerHour: String(eq.maintenanceCostPerHour || 0),
+      otherCostPerHour: String(eq.otherCostPerHour || 0),
+    });
+    setIsEquipmentModalOpen(true);
+  };
+
+  const handleSaveEquipment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!equipmentForm.code.trim() || !equipmentForm.name.trim() || !equipmentForm.processId) {
+      onNotify?.('Preencha os campos obrigatórios: Código, Nome e Centro de Custo.');
+      return;
+    }
+
+    const item: Equipment = {
+      id: editingEquipmentId || `eq-${Date.now()}`,
+      code: equipmentForm.code.trim().toUpperCase(),
+      name: equipmentForm.name.trim(),
+      description: equipmentForm.description.trim(),
+      processId: equipmentForm.processId,
+      acquisitionCost: Math.max(0, Number(equipmentForm.acquisitionCost) || 0),
+      residualValue: Math.max(0, Number(equipmentForm.residualValue) || 0),
+      estimatedUsefulLife: Math.max(0, Number(equipmentForm.estimatedUsefulLife) || 0),
+      productiveHoursAvailable: Math.max(1, Number(equipmentForm.productiveHoursAvailable) || 220),
+      powerKw: Math.max(0, Number(equipmentForm.powerKw) || 0),
+      energyTariff: Math.max(0, Number(equipmentForm.energyTariff) || 0),
+      maintenanceCostPerHour: Math.max(0, Number(equipmentForm.maintenanceCostPerHour) || 0),
+      otherCostPerHour: Math.max(0, Number(equipmentForm.otherCostPerHour) || 0),
+      createdAt: editingEquipmentId
+        ? equipmentList.find((e) => e.id === editingEquipmentId)?.createdAt || new Date().toISOString()
+        : new Date().toISOString(),
+    };
+
+    if (editingEquipmentId) {
+      setEquipmentList((prev) => prev.map((eq) => (eq.id === item.id ? item : eq)));
+      onUpdateEquipment?.(item);
+      await dbService.saveEquipment(item);
+      onNotify?.(`Equipamento "${item.name}" atualizado com sucesso!`);
+    } else {
+      setEquipmentList((prev) => [item, ...prev]);
+      onAddEquipment?.(item);
+      await dbService.saveEquipment(item);
+      onNotify?.(`Equipamento "${item.name}" cadastrado com sucesso!`);
+    }
+
+    setIsEquipmentModalOpen(false);
+    setEditingEquipmentId(null);
+  };
+
+  const handleDeleteEquipmentClick = async (eq: Equipment) => {
+    // Validação de integridade referencial: verificar se está em etapas de roteiro ou manutenção
+    const hasRouteStep = steps.some((s) => s.equipmentId === eq.id);
+    const hasMaintenance = maintenance.some((m) => m.equipmentId === eq.id);
+
+    if (hasRouteStep || hasMaintenance) {
+      const reasons: string[] = [];
+      if (hasRouteStep) reasons.push('etapas de roteiro de produção');
+      if (hasMaintenance) reasons.push('registros de manutenção');
+      alert(`Não é possível excluir o equipamento "${eq.name}" (${eq.code}) pois ele possui vínculos ativos em: ${reasons.join(' e ')}.\nRemova os vínculos antes de excluir.`);
+      return;
+    }
+
+    if (!confirm(`Deseja realmente excluir o equipamento "${eq.name}" (${eq.code})?`)) return;
+
+    setEquipmentList((prev) => prev.filter((item) => item.id !== eq.id));
+    onDeleteEquipment?.(eq.id);
+    await dbService.deleteEquipment(eq.id);
+    onNotify?.(`Equipamento "${eq.name}" excluído com sucesso.`);
+  };
+
+  // Filtragem da lista de equipamentos
+  const filteredEquipment = useMemo(() => {
+    return equipmentList.filter((item) => {
+      const matchesSearch =
+        !equipmentSearch.trim() ||
+        item.code.toLowerCase().includes(equipmentSearch.toLowerCase()) ||
+        item.name.toLowerCase().includes(equipmentSearch.toLowerCase()) ||
+        (item.description && item.description.toLowerCase().includes(equipmentSearch.toLowerCase()));
+      const matchesProcess = !equipmentProcessFilter || item.processId === equipmentProcessFilter;
+      return matchesSearch && matchesProcess;
+    });
+  }, [equipmentList, equipmentSearch, equipmentProcessFilter]);
 
   // Salvar / Atualizar Colaborador
   const handleSaveEmployee = async (event: React.FormEvent) => {
@@ -718,80 +908,116 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                 </div>
 
                 {/* Grade de Elementos de Custo Industrial */}
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-[#574335] mb-3">
-                    Composição Contábil do Custo Industrial Total
-                  </h4>
-                  <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
-                    <div className="rounded-xl bg-[#f4f3f1] p-3.5 border border-[#e9e8e6]">
-                      <span className="block text-[11px] font-bold text-[#574335]">Insumos / Materiais</span>
-                      <strong className="text-lg font-black text-[#1a1c1b]">
-                        {formatCurrency(operation.materialCost)}
-                      </strong>
-                    </div>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-[#574335]">
+                      Composição Contábil do Custo Industrial Total
+                    </h4>
+                    <span className="text-[11px] font-medium text-[#574335]">
+                      Separação Contábil: <strong>Custos Diretos</strong> e <strong>Custos Indiretos de Fabricação (CIF)</strong>
+                    </span>
+                  </div>
 
-                    <div className="rounded-xl bg-emerald-50/80 p-3.5 border border-emerald-200">
-                      <div className="flex items-center justify-between">
-                        <span className="block text-[11px] font-bold text-emerald-900">MOD (Direta)</span>
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-200/70 text-emerald-800">
-                          Horas OP
-                        </span>
+                  {/* Grupo: Custos Diretos */}
+                  <div className="space-y-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
+                      Custos Diretos de Fabricação
+                    </span>
+                    <div className="grid grid-cols-2 md:grid-cols-2 gap-3">
+                      <div className="rounded-xl bg-[#f4f3f1] p-3.5 border border-[#e9e8e6]">
+                        <span className="block text-[11px] font-bold text-[#574335]">Insumos / Matérias-Primas</span>
+                        <strong className="text-lg font-black text-[#1a1c1b]">
+                          {formatCurrency(operation.materialCost)}
+                        </strong>
                       </div>
-                      <strong className="text-lg font-black text-emerald-700">
-                        {formatCurrency(operation.directLaborCost)}
-                      </strong>
-                    </div>
 
-                    <div className="rounded-xl bg-amber-50/80 p-3.5 border border-amber-200">
-                      <div className="flex items-center justify-between">
-                        <span className="block text-[11px] font-bold text-amber-900">MOI (Rateada)</span>
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-200/70 text-amber-800">
-                          Rateio CC
-                        </span>
+                      <div className="rounded-xl bg-emerald-50/80 p-3.5 border border-emerald-200">
+                        <div className="flex items-center justify-between">
+                          <span className="block text-[11px] font-bold text-emerald-900">MOD (Mão de Obra Direta)</span>
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-200/70 text-emerald-800">
+                            Horas Apontadas na OP
+                          </span>
+                        </div>
+                        <strong className="text-lg font-black text-emerald-700">
+                          {formatCurrency(operation.directLaborCost)}
+                        </strong>
                       </div>
-                      <strong className="text-lg font-black text-amber-700">
-                        {formatCurrency(operation.indirectLaborCost)}
-                      </strong>
                     </div>
+                  </div>
 
-                    <div className="rounded-xl bg-[#f4f3f1] p-3.5 border border-[#e9e8e6]">
-                      <span className="block text-[11px] font-bold text-[#574335]">Energia & Utilidades</span>
-                      <strong className="text-lg font-black text-[#1a1c1b]">
-                        {formatCurrency(operation.energyCost)}
-                      </strong>
+                  {/* Grupo: Custos Indiretos (CIF) */}
+                  <div className="space-y-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-amber-600"></span>
+                      Custos Indiretos de Fabricação (CIF)
+                    </span>
+                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+                      <div className="rounded-xl bg-amber-50/80 p-3.5 border border-amber-200">
+                        <div className="flex items-center justify-between">
+                          <span className="block text-[11px] font-bold text-amber-900">MOI (Indireta Rateada)</span>
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-200/70 text-amber-800">
+                            Rateio CC
+                          </span>
+                        </div>
+                        <strong className="text-lg font-black text-amber-700">
+                          {formatCurrency(operation.indirectLaborCost)}
+                        </strong>
+                      </div>
+
+                      <div className="rounded-xl bg-sky-50/80 p-3.5 border border-sky-200">
+                        <div className="flex items-center justify-between">
+                          <span className="block text-[11px] font-bold text-sky-900">CIF - Energia Elétrica</span>
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-200/70 text-sky-800">
+                            Consumo kWh
+                          </span>
+                        </div>
+                        <strong className="text-lg font-black text-sky-800">
+                          {formatCurrency(operation.energyCost)}
+                        </strong>
+                      </div>
+
+                      <div className="rounded-xl bg-[#f4f3f1] p-3.5 border border-[#e9e8e6]">
+                        <span className="block text-[11px] font-bold text-[#574335]">CIF - Depreciação de Máquinas</span>
+                        <strong className="text-lg font-black text-[#1a1c1b]">
+                          {formatCurrency(operation.depreciationCost)}
+                        </strong>
+                      </div>
+
+                      <div className="rounded-xl bg-[#f4f3f1] p-3.5 border border-[#e9e8e6]">
+                        <span className="block text-[11px] font-bold text-[#574335]">CIF - Manutenção de Máquinas</span>
+                        <strong className="text-lg font-black text-[#1a1c1b]">
+                          {formatCurrency(operation.maintenanceCost)}
+                        </strong>
+                      </div>
+
+                      <div className="rounded-xl bg-[#f4f3f1] p-3.5 border border-[#e9e8e6]">
+                        <span className="block text-[11px] font-bold text-[#574335]">CIF - Outros Custos Indiretos</span>
+                        <strong className="text-lg font-black text-[#1a1c1b]">
+                          {formatCurrency(operation.otherIndirectCost)}
+                        </strong>
+                      </div>
                     </div>
+                  </div>
 
-                    <div className="rounded-xl bg-[#f4f3f1] p-3.5 border border-[#e9e8e6]">
-                      <span className="block text-[11px] font-bold text-[#574335]">Manutenção de Máquinas</span>
-                      <strong className="text-lg font-black text-[#1a1c1b]">
-                        {formatCurrency(operation.maintenanceCost)}
-                      </strong>
-                    </div>
-
-                    <div className="rounded-xl bg-[#f4f3f1] p-3.5 border border-[#e9e8e6]">
-                      <span className="block text-[11px] font-bold text-[#574335]">Depreciação</span>
-                      <strong className="text-lg font-black text-[#1a1c1b]">
-                        {formatCurrency(operation.depreciationCost)}
-                      </strong>
-                    </div>
-
-                    <div className="rounded-xl bg-[#f4f3f1] p-3.5 border border-[#e9e8e6]">
-                      <span className="block text-[11px] font-bold text-[#574335]">Outros Custos Indiretos</span>
-                      <strong className="text-lg font-black text-[#1a1c1b]">
-                        {formatCurrency(operation.otherIndirectCost)}
-                      </strong>
-                    </div>
-
-                    <div className="rounded-xl bg-[#954a00]/10 p-3.5 border border-[#954a00]/30">
-                      <span className="block text-[11px] font-bold text-[#954a00]">Custo Industrial Total</span>
-                      <strong className="text-xl font-black text-[#954a00]">
+                  {/* Grupo: Totais */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                    <div className="rounded-xl bg-[#954a00]/10 p-4 border border-[#954a00]/30 flex items-center justify-between">
+                      <div>
+                        <span className="block text-xs font-bold text-[#954a00]">Custo Industrial Total da OP</span>
+                        <span className="text-[11px] text-[#574335]">Custos Diretos + CIF Totais</span>
+                      </div>
+                      <strong className="text-2xl font-black text-[#954a00]">
                         {formatCurrency(operation.totalCost)}
                       </strong>
                     </div>
 
-                    <div className="rounded-xl bg-stone-900 text-white p-3.5 border border-stone-800">
-                      <span className="block text-[11px] font-bold text-stone-300">Custo Total / Barra</span>
-                      <strong className="text-xl font-black text-amber-400">
+                    <div className="rounded-xl bg-stone-900 text-white p-4 border border-stone-800 flex items-center justify-between">
+                      <div>
+                        <span className="block text-xs font-bold text-stone-300">Custo Total por Barra Produzida</span>
+                        <span className="text-[11px] text-stone-400">Total / {operation.goodBarsQuantity || operation.finishedQuantity} barras boas</span>
+                      </div>
+                      <strong className="text-2xl font-black text-amber-400">
                         {formatCurrency(operation.unitCost)}
                       </strong>
                     </div>
@@ -873,9 +1099,9 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                           <th className="p-3 text-right">Duração (h)</th>
                           <th className="p-3 text-right">Homem-Hora</th>
                           <th className="p-3 text-right text-emerald-800">MOD Direta</th>
-                          <th className="p-3 text-right">Energia</th>
-                          <th className="p-3 text-right">Equipamento</th>
-                          <th className="p-3 text-right font-bold">Total da Etapa</th>
+                          <th className="p-3 text-right text-sky-800">CIF - Energia</th>
+                          <th className="p-3 text-right text-stone-700">Equipamento (Depr.+Manut.)</th>
+                          <th className="p-3 text-right font-bold text-[#1a1c1b]">Total da Etapa</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -896,8 +1122,12 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                               <td className="p-3 text-right font-semibold text-emerald-700">
                                 {formatCurrency(item.laborCost)}
                               </td>
-                              <td className="p-3 text-right">{formatCurrency(item.energyCost)}</td>
-                              <td className="p-3 text-right">{formatCurrency(item.equipmentCost)}</td>
+                              <td className="p-3 text-right font-semibold text-sky-800">
+                                {formatCurrency(item.energyCost)}
+                              </td>
+                              <td className="p-3 text-right text-stone-700">
+                                {formatCurrency(item.equipmentCost)}
+                              </td>
                               <td className="p-3 text-right font-black text-[#1a1c1b]">
                                 {formatCurrency(item.totalCost)}
                               </td>
@@ -906,6 +1136,12 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                         })}
                       </tbody>
                     </table>
+                    <div className="px-3.5 py-2.5 bg-stone-50 border-t border-[#e9e8e6] text-[11px] text-[#574335] flex items-center gap-2">
+                      <Info className="w-3.5 h-3.5 text-[#954a00] shrink-0" />
+                      <span>
+                        <strong>Regra de Classificação Contábil:</strong> O custo de Equipamento na etapa considera Depreciação + Manutenção + Outros por hora. A Energia Elétrica é classificada e apurada separadamente como CIF (Custo Indireto de Fabricação), sem duplicidade.
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -1797,49 +2033,725 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* ABA: EQUIPAMENTOS */}
+      {/* ABA: EQUIPAMENTOS (CENTRALIZADO COM DEPRECIAÇÃO CIF E ENERGIA CIF) */}
       {/* ========================================================================= */}
       {tab === 'equipamentos' && (
-        <section className="bg-white rounded-2xl border border-[#dec1af] p-6 shadow-xs space-y-4">
-          <h2 className="font-black text-lg text-[#1a1c1b]">Equipamentos & Máquinas Industriais</h2>
-          <div className="space-y-2 mt-4">
-            {equipment.map((item) => (
-              <div
-                key={item.id}
-                className="flex justify-between p-3.5 rounded-xl bg-[#f4f3f1] text-xs border border-[#dec1af]/30"
-              >
-                <div>
-                  <strong className="text-[#1a1c1b] text-sm">{item.code} - {item.name}</strong>
-                  <span className="text-[#574335] ml-2">{item.description}</span>
-                </div>
-                <span className="font-semibold text-[#574335]">
-                  {item.powerKw || 0} kW • Tarifa: {formatCurrency(item.energyTariff || 0)}/kWh
+        <section id="section-equipamentos" className="space-y-6">
+          <div className="bg-white rounded-2xl border border-[#dec1af] p-6 shadow-xs space-y-6">
+            {/* Cabeçalho da Aba */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-[#dec1af]/30 pb-5">
+              <div>
+                <span className="text-xs uppercase font-bold tracking-wider text-[#954a00]">
+                  Ativos Fabris & Custeio
                 </span>
+                <h2 className="text-xl font-black text-[#1a1c1b]">
+                  Equipamentos & Máquinas Industriais
+                </h2>
+                <p className="text-xs text-[#574335] mt-0.5">
+                  Gestão centralizada de ativos fabris, parâmetros de depreciação (CIF), potência/energia elétrica (CIF) e manutenção.
+                </p>
               </div>
-            ))}
-          </div>
-        </section>
-      )}
 
-      {/* ========================================================================= */}
-      {/* ABA: DEPRECIAÇÃO */}
-      {/* ========================================================================= */}
-      {tab === 'depreciacao' && (
-        <section className="bg-white rounded-2xl border border-[#dec1af] p-6 shadow-xs space-y-4">
-          <h2 className="font-black text-lg text-[#1a1c1b]">Depreciação de Máquinas & Linha</h2>
-          <div className="space-y-2 mt-4">
-            {equipment.map((item) => (
-              <div
-                key={item.id}
-                className="p-3.5 rounded-xl bg-[#f4f3f1] text-xs border border-[#dec1af]/30 flex justify-between"
-              >
-                <strong className="text-[#1a1c1b]">{item.name}</strong>
-                <span className="text-[#574335]">
-                  Aquisição: {formatCurrency(item.acquisitionCost)} • Residual: {formatCurrency(item.residualValue)} • Vida útil: {item.estimatedUsefulLife} anos
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  id="btn-novo-equipamento"
+                  onClick={handleOpenNewEquipment}
+                  className="px-4 py-2.5 bg-[#954a00] hover:bg-[#7a3c00] text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-1.5 shrink-0"
+                >
+                  <Plus className="w-4 h-4" />
+                  Novo Equipamento
+                </button>
+              </div>
+            </div>
+
+            {/* Painel de Indicadores Gerais da Frota */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-3.5 rounded-xl bg-[#f4f3f1] border border-[#e9e8e6]">
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-[#574335]">
+                  Equipamentos Ativos
+                </span>
+                <strong className="text-xl font-black text-[#1a1c1b]">
+                  {equipmentList.length}
+                </strong>
+                <span className="block text-[10px] text-[#574335] mt-0.5">
+                  Máquinas cadastradas
                 </span>
               </div>
-            ))}
+
+              <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200">
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-amber-900">
+                  Potência Instalada
+                </span>
+                <strong className="text-xl font-black text-amber-800">
+                  {equipmentList.reduce((acc, eq) => acc + (eq.powerKw || 0), 0).toFixed(1)} kW
+                </strong>
+                <span className="block text-[10px] text-amber-700 mt-0.5">
+                  Carga total do parque
+                </span>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-sky-50/70 border border-sky-200">
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-sky-900">
+                  Total Valor de Aquisição
+                </span>
+                <strong className="text-xl font-black text-sky-800">
+                  {formatCurrency(equipmentList.reduce((acc, eq) => acc + (eq.acquisitionCost || 0), 0))}
+                </strong>
+                <span className="block text-[10px] text-sky-700 mt-0.5">
+                  Base depreciável fabril
+                </span>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200">
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-emerald-900">
+                  Depreciação Total / Mês
+                </span>
+                <strong className="text-xl font-black text-emerald-800">
+                  {formatCurrency(
+                    equipmentList.reduce((acc, eq) => {
+                      const d = getEquipmentDepreciationDetails(eq);
+                      return acc + d.monthlyDepreciation;
+                    }, 0)
+                  )}
+                </strong>
+                <span className="block text-[10px] text-emerald-700 mt-0.5">
+                  Apurada como CIF
+                </span>
+              </div>
+            </div>
+
+            {/* Barra de Filtros e Busca */}
+            <div className="flex flex-col sm:flex-row gap-3 pt-1">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-stone-400 absolute left-3 top-2.5 pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Buscar por código, nome ou descrição do equipamento..."
+                  value={equipmentSearch}
+                  onChange={(e) => setEquipmentSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-[#dec1af] bg-white text-[#1a1c1b] placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-[#954a00]/30 transition-all"
+                />
+              </div>
+
+              <div className="w-full sm:w-64">
+                <select
+                  value={equipmentProcessFilter}
+                  onChange={(e) => setEquipmentProcessFilter(e.target.value)}
+                  className="w-full py-2 px-3 text-xs rounded-xl border border-[#dec1af] bg-white text-[#1a1c1b] focus:outline-none focus:ring-2 focus:ring-[#954a00]/30 transition-all"
+                >
+                  <option value="">Todos os Centros de Custo</option>
+                  {processes.map((proc) => (
+                    <option key={proc.id} value={proc.id}>
+                      {proc.code} - {proc.description}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {(equipmentSearch || equipmentProcessFilter) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEquipmentSearch('');
+                    setEquipmentProcessFilter('');
+                  }}
+                  className="px-3 py-2 text-xs text-[#574335] hover:text-[#954a00] hover:bg-stone-100 rounded-xl transition-all"
+                >
+                  Limpar Filtros
+                </button>
+              )}
+            </div>
+
+            {/* Listagem de Equipamentos */}
+            <div className="overflow-x-auto rounded-xl border border-[#dec1af]/60">
+              <table className="w-full text-xs">
+                <thead className="bg-[#f4f3f1] text-[#574335] font-bold">
+                  <tr>
+                    <th className="p-3 text-left">Código</th>
+                    <th className="p-3 text-left">Equipamento</th>
+                    <th className="p-3 text-left">Centro de Custo</th>
+                    <th className="p-3 text-right">Aquisição</th>
+                    <th className="p-3 text-right">Vida Útil</th>
+                    <th className="p-3 text-right text-emerald-800">Depreciação / h [CIF]</th>
+                    <th className="p-3 text-right text-amber-800">Potência</th>
+                    <th className="p-3 text-right text-sky-800">Energia / h [CIF]</th>
+                    <th className="p-3 text-right font-black text-[#1a1c1b]">Custo Máq. / h</th>
+                    <th className="p-3 text-center">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredEquipment.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="p-8 text-center text-[#574335]">
+                        <Cpu className="w-8 h-8 text-stone-300 mx-auto mb-2" />
+                        <p className="font-semibold text-sm">Nenhum equipamento encontrado</p>
+                        <p className="text-xs text-stone-400 mt-0.5">
+                          {equipmentSearch || equipmentProcessFilter
+                            ? 'Ajuste os filtros de busca para ver resultados.'
+                            : 'Clique em "Novo Equipamento" para cadastrar.'}
+                        </p>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredEquipment.map((eq) => {
+                      const proc = processes.find((p) => p.id === eq.processId);
+                      const deprDetails = getEquipmentDepreciationDetails(eq);
+                      const energyDetails = getEquipmentEnergyDetails(eq);
+                      const directMachineCost =
+                        deprDetails.hourlyDepreciation +
+                        (eq.maintenanceCostPerHour || 0) +
+                        (eq.otherCostPerHour || 0);
+
+                      return (
+                        <tr key={eq.id} className="border-b border-[#e9e8e6] hover:bg-stone-50 transition-colors">
+                          <td className="p-3 font-bold text-[#1a1c1b] whitespace-nowrap">
+                            {eq.code}
+                          </td>
+                          <td className="p-3 font-medium text-[#1a1c1b]">
+                            <div>{eq.name}</div>
+                            {eq.description && (
+                              <div className="text-[10px] text-[#574335] truncate max-w-xs">
+                                {eq.description}
+                              </div>
+                            )}
+                          </td>
+                          <td className="p-3 text-[#574335]">
+                            {proc ? (
+                              <span className="px-2 py-0.5 rounded-md bg-stone-100 text-stone-700 font-medium">
+                                {proc.code} - {proc.description}
+                              </span>
+                            ) : (
+                              <span className="text-stone-400 italic">Não vinculado</span>
+                            )}
+                          </td>
+                          <td className="p-3 text-right text-[#574335] whitespace-nowrap">
+                            {formatCurrency(eq.acquisitionCost || 0)}
+                          </td>
+                          <td className="p-3 text-right text-[#574335] whitespace-nowrap">
+                            {eq.estimatedUsefulLife || 0} anos
+                          </td>
+                          <td className="p-3 text-right font-bold text-emerald-700 whitespace-nowrap">
+                            {formatCurrency(deprDetails.hourlyDepreciation)}
+                          </td>
+                          <td className="p-3 text-right text-amber-800 whitespace-nowrap">
+                            {eq.powerKw ? `${eq.powerKw} kW` : '0 kW'}
+                          </td>
+                          <td className="p-3 text-right font-bold text-sky-800 whitespace-nowrap">
+                            {formatCurrency(energyDetails.hourlyEnergyCost)}
+                          </td>
+                          <td className="p-3 text-right font-black text-[#1a1c1b] whitespace-nowrap">
+                            {formatCurrency(directMachineCost)}
+                          </td>
+                          <td className="p-3 text-center whitespace-nowrap">
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                type="button"
+                                title="Visualizar Detalhes"
+                                onClick={() => setViewingEquipment(eq)}
+                                className="p-1.5 rounded-lg text-stone-600 hover:bg-stone-200 hover:text-stone-900 transition-all"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                title="Editar Equipamento"
+                                onClick={() => handleOpenEditEquipment(eq)}
+                                className="p-1.5 rounded-lg text-[#954a00] hover:bg-[#954a00]/10 transition-all"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                title="Excluir Equipamento"
+                                onClick={() => handleDeleteEquipmentClick(eq)}
+                                className="p-1.5 rounded-lg text-stone-500 hover:bg-red-100 hover:text-red-700 transition-all"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
+
+          {/* ========================================================================= */}
+          {/* MODAL: CADASTRO / EDIÇÃO DE EQUIPAMENTO */}
+          {/* ========================================================================= */}
+          {isEquipmentModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs overflow-y-auto">
+              <div className="bg-white rounded-2xl border border-[#dec1af] shadow-2xl max-w-3xl w-full p-6 space-y-6 my-8 max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between border-b border-[#dec1af]/40 pb-4">
+                  <div>
+                    <span className="text-xs uppercase font-bold tracking-wider text-[#954a00]">
+                      {editingEquipmentId ? 'Edição de Ativo Fabril' : 'Novo Ativo Fabril'}
+                    </span>
+                    <h3 className="text-lg font-black text-[#1a1c1b]">
+                      {editingEquipmentId
+                        ? `Editar Equipamento: ${equipmentForm.name}`
+                        : 'Cadastro de Equipamento & Parâmetros de Custo'}
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEquipmentModalOpen(false);
+                      setEditingEquipmentId(null);
+                    }}
+                    className="p-1.5 rounded-lg text-stone-400 hover:bg-stone-100 hover:text-stone-700 transition-all"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveEquipment} className="space-y-6">
+                  {/* SEÇÃO 1: Identificação */}
+                  <div className="space-y-3">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-[#574335] flex items-center gap-1.5">
+                      <Cpu className="w-4 h-4 text-[#954a00]" />
+                      1. Identificação do Equipamento
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div>
+                        <label className={labelClass}>Código do Equipamento *</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="Ex: EQ-MIST-01"
+                          value={equipmentForm.code}
+                          onChange={(e) => setEquipmentForm({ ...equipmentForm, code: e.target.value })}
+                          className={inputClass}
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className={labelClass}>Nome do Equipamento *</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="Ex: Misturador Térmico Inox 50L"
+                          value={equipmentForm.name}
+                          onChange={(e) => setEquipmentForm({ ...equipmentForm, name: e.target.value })}
+                          className={inputClass}
+                        />
+                      </div>
+                      <div>
+                        <label className={labelClass}>Centro de Custo / Processo *</label>
+                        <select
+                          required
+                          value={equipmentForm.processId}
+                          onChange={(e) => setEquipmentForm({ ...equipmentForm, processId: e.target.value })}
+                          className={inputClass}
+                        >
+                          <option value="">Selecione o centro de custo...</option>
+                          {processes.map((proc) => (
+                            <option key={proc.id} value={proc.id}>
+                              {proc.code} - {proc.description}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className={labelClass}>Descrição / Especificações Técnicas</label>
+                        <input
+                          type="text"
+                          placeholder="Ex: Capacidade 50L, acabamento sanitário, controle eletrônico de rotação"
+                          value={equipmentForm.description}
+                          onChange={(e) => setEquipmentForm({ ...equipmentForm, description: e.target.value })}
+                          className={inputClass}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SEÇÃO 2: Depreciação (CIF) */}
+                  <div className="space-y-3 p-4 rounded-xl bg-emerald-50/40 border border-emerald-200">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-900 flex items-center gap-1.5">
+                        <TrendingUp className="w-4 h-4 text-emerald-700" />
+                        2. Depreciação do Ativo
+                      </h4>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-200 text-emerald-900">
+                        Classificação na Apuração: CIF - Depreciação
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div>
+                        <label className={labelClass}>Valor de Aquisição (R$)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={equipmentForm.acquisitionCost}
+                          onChange={(e) => setEquipmentForm({ ...equipmentForm, acquisitionCost: e.target.value })}
+                          className={inputClass}
+                        />
+                      </div>
+                      <div>
+                        <label className={labelClass}>Valor Residual (R$)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={equipmentForm.residualValue}
+                          onChange={(e) => setEquipmentForm({ ...equipmentForm, residualValue: e.target.value })}
+                          className={inputClass}
+                        />
+                      </div>
+                      <div>
+                        <label className={labelClass}>Vida Útil Estimada (anos)</label>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0.1"
+                          value={equipmentForm.estimatedUsefulLife}
+                          onChange={(e) => setEquipmentForm({ ...equipmentForm, estimatedUsefulLife: e.target.value })}
+                          className={inputClass}
+                        />
+                      </div>
+                      <div>
+                        <label className={labelClass}>Horas Produtivas / Mês</label>
+                        <input
+                          type="number"
+                          step="1"
+                          min="1"
+                          value={equipmentForm.productiveHoursAvailable}
+                          onChange={(e) => setEquipmentForm({ ...equipmentForm, productiveHoursAvailable: e.target.value })}
+                          className={inputClass}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Pré-visualização de cálculo de depreciação */}
+                    <div className="grid grid-cols-3 gap-3 pt-2">
+                      <div className="bg-white p-2.5 rounded-lg border border-emerald-200 text-center">
+                        <span className="block text-[10px] uppercase font-bold text-[#574335]">
+                          Valor Depreciável
+                        </span>
+                        <strong className="text-xs font-black text-emerald-800">
+                          {formatCurrency(liveEquipmentCalc.depreciableValue)}
+                        </strong>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-lg border border-emerald-200 text-center">
+                        <span className="block text-[10px] uppercase font-bold text-[#574335]">
+                          Depreciação Mensal
+                        </span>
+                        <strong className="text-xs font-black text-emerald-800">
+                          {formatCurrency(liveEquipmentCalc.monthlyDepreciation)}
+                        </strong>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-lg border border-emerald-300 text-center">
+                        <span className="block text-[10px] uppercase font-bold text-emerald-900">
+                          Depreciação / Hora (CIF)
+                        </span>
+                        <strong className="text-sm font-black text-emerald-700">
+                          {formatCurrency(liveEquipmentCalc.hourlyDepreciation)} / h
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SEÇÃO 3: Energia Elétrica (CIF) */}
+                  <div className="space-y-3 p-4 rounded-xl bg-sky-50/40 border border-sky-200">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-sky-900 flex items-center gap-1.5">
+                        <Zap className="w-4 h-4 text-sky-700" />
+                        3. Energia Elétrica
+                      </h4>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-200 text-sky-900">
+                        Custo de Energia = CIF (Custo Indireto de Fabricação)
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className={labelClass}>Potência Nominal (kW)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={equipmentForm.powerKw}
+                          onChange={(e) => setEquipmentForm({ ...equipmentForm, powerKw: e.target.value })}
+                          className={inputClass}
+                        />
+                      </div>
+                      <div>
+                        <label className={labelClass}>Tarifa de Energia (R$ / kWh)</label>
+                        <input
+                          type="number"
+                          step="0.001"
+                          min="0"
+                          value={equipmentForm.energyTariff}
+                          onChange={(e) => setEquipmentForm({ ...equipmentForm, energyTariff: e.target.value })}
+                          className={inputClass}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Pré-visualização de cálculo de energia */}
+                    <div className="grid grid-cols-3 gap-3 pt-2">
+                      <div className="bg-white p-2.5 rounded-lg border border-sky-200 text-center">
+                        <span className="block text-[10px] uppercase font-bold text-[#574335]">
+                          Consumo Estimado / Mês
+                        </span>
+                        <strong className="text-xs font-black text-sky-900">
+                          {formatNumber(liveEquipmentCalc.estimatedMonthlyKwh)} kWh
+                        </strong>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-lg border border-sky-300 text-center">
+                        <span className="block text-[10px] uppercase font-bold text-sky-900">
+                          Custo de Energia / Hora (CIF)
+                        </span>
+                        <strong className="text-sm font-black text-sky-800">
+                          {formatCurrency(liveEquipmentCalc.hourlyEnergyCost)} / h
+                        </strong>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-lg border border-sky-200 text-center">
+                        <span className="block text-[10px] uppercase font-bold text-[#574335]">
+                          Custo Estimado / Mês
+                        </span>
+                        <strong className="text-xs font-black text-sky-900">
+                          {formatCurrency(liveEquipmentCalc.estimatedMonthlyEnergyCost)}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SEÇÃO 4: Manutenção e Outros Custos */}
+                  <div className="space-y-3 p-4 rounded-xl bg-amber-50/40 border border-amber-200">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+                      <Wrench className="w-4 h-4 text-amber-700" />
+                      4. Manutenção & Outros Custos Operacionais
+                    </h4>
+
+                    <div className="grid grid-cols-2 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className={labelClass}>Custo de Manutenção Estimado (R$ / h)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={equipmentForm.maintenanceCostPerHour}
+                          onChange={(e) => setEquipmentForm({ ...equipmentForm, maintenanceCostPerHour: e.target.value })}
+                          className={inputClass}
+                        />
+                      </div>
+                      <div>
+                        <label className={labelClass}>Outros Custos Operacionais (R$ / h)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={equipmentForm.otherCostPerHour}
+                          onChange={(e) => setEquipmentForm({ ...equipmentForm, otherCostPerHour: e.target.value })}
+                          className={inputClass}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Resumo do custo da máquina sem energia */}
+                    <div className="p-3 bg-white rounded-lg border border-amber-300 flex items-center justify-between">
+                      <div>
+                        <span className="block text-xs font-bold text-[#1a1c1b]">
+                          Custo Operacional Total do Equipamento / Hora
+                        </span>
+                        <span className="text-[10px] text-[#574335]">
+                          Depreciação ({formatCurrency(liveEquipmentCalc.hourlyDepreciation)}) + Manutenção ({formatCurrency(Number(equipmentForm.maintenanceCostPerHour) || 0)}) + Outros ({formatCurrency(Number(equipmentForm.otherCostPerHour) || 0)})
+                        </span>
+                      </div>
+                      <strong className="text-base font-black text-[#954a00]">
+                        {formatCurrency(liveEquipmentCalc.hourlyDirectEquipmentCost)} / h
+                      </strong>
+                    </div>
+                  </div>
+
+                  {/* Botões do Formulário */}
+                  <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#dec1af]/40">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEquipmentModalOpen(false);
+                        setEditingEquipmentId(null);
+                      }}
+                      className="px-4 py-2 text-xs font-bold text-[#574335] hover:bg-stone-100 rounded-xl transition-all"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-6 py-2.5 bg-[#954a00] hover:bg-[#7a3c00] text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-1.5"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      {editingEquipmentId ? 'Salvar Alterações' : 'Cadastrar Equipamento'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* MODAL: VISUALIZAÇÃO DETALHADA DE EQUIPAMENTO */}
+          {/* ========================================================================= */}
+          {viewingEquipment && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+              <div className="bg-white rounded-2xl border border-[#dec1af] shadow-2xl max-w-2xl w-full p-6 space-y-6 max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between border-b border-[#dec1af]/40 pb-4">
+                  <div>
+                    <span className="text-xs uppercase font-bold tracking-wider text-[#954a00]">
+                      Ficha do Ativo Fabril
+                    </span>
+                    <h3 className="text-lg font-black text-[#1a1c1b]">
+                      {viewingEquipment.code} - {viewingEquipment.name}
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setViewingEquipment(null)}
+                    className="p-1.5 rounded-lg text-stone-400 hover:bg-stone-100 hover:text-stone-700 transition-all"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Centro de custo e descrição */}
+                  <div className="p-3.5 rounded-xl bg-[#f4f3f1] border border-[#e9e8e6] space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-[#574335] font-bold">Centro de Custo / Processo:</span>
+                      <span className="text-xs font-black text-[#1a1c1b]">
+                        {(() => {
+                          const p = processes.find((item) => item.id === viewingEquipment.processId);
+                          return p ? `${p.code} - ${p.description}` : 'Não vinculado';
+                        })()}
+                      </span>
+                    </div>
+                    {viewingEquipment.description && (
+                      <p className="text-xs text-[#574335] pt-1">
+                        <strong>Descrição:</strong> {viewingEquipment.description}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Seção Depreciação */}
+                  {(() => {
+                    const depr = getEquipmentDepreciationDetails(viewingEquipment);
+                    const energy = getEquipmentEnergyDetails(viewingEquipment);
+                    const machineHourCost =
+                      depr.hourlyDepreciation +
+                      (viewingEquipment.maintenanceCostPerHour || 0) +
+                      (viewingEquipment.otherCostPerHour || 0);
+
+                    return (
+                      <>
+                        <div className="p-4 rounded-xl bg-emerald-50/60 border border-emerald-200 space-y-2.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-black text-emerald-900 uppercase">
+                              Depreciação (CIF)
+                            </span>
+                            <span className="text-xs font-black text-emerald-800">
+                              {formatCurrency(depr.hourlyDepreciation)} / hora
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                            <div>
+                              <span className="text-[10px] text-stone-500 block">Aquisição:</span>
+                              <strong className="text-stone-800">{formatCurrency(viewingEquipment.acquisitionCost)}</strong>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-stone-500 block">Residual:</span>
+                              <strong className="text-stone-800">{formatCurrency(viewingEquipment.residualValue)}</strong>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-stone-500 block">Vida Útil:</span>
+                              <strong className="text-stone-800">{viewingEquipment.estimatedUsefulLife} anos</strong>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-stone-500 block">Mensal:</span>
+                              <strong className="text-stone-800">{formatCurrency(depr.monthlyDepreciation)}/mês</strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="p-4 rounded-xl bg-sky-50/60 border border-sky-200 space-y-2.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-black text-sky-900 uppercase">
+                              Energia Elétrica (CIF)
+                            </span>
+                            <span className="text-xs font-black text-sky-800">
+                              {formatCurrency(energy.hourlyEnergyCost)} / hora
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                            <div>
+                              <span className="text-[10px] text-stone-500 block">Potência:</span>
+                              <strong className="text-stone-800">{viewingEquipment.powerKw || 0} kW</strong>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-stone-500 block">Tarifa:</span>
+                              <strong className="text-stone-800">{formatCurrency(viewingEquipment.energyTariff || 0)}/kWh</strong>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-stone-500 block">Consumo Mensal:</span>
+                              <strong className="text-stone-800">{formatNumber(energy.estimatedMonthlyKwh)} kWh</strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="p-4 rounded-xl bg-amber-50/60 border border-amber-200 space-y-2.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-black text-amber-900 uppercase">
+                              Custo Operacional da Máquina / Hora (Sem Energia)
+                            </span>
+                            <span className="text-sm font-black text-[#954a00]">
+                              {formatCurrency(machineHourCost)} / hora
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div>
+                              <span className="text-[10px] text-stone-500 block">Manutenção Estimada:</span>
+                              <strong className="text-stone-800">{formatCurrency(viewingEquipment.maintenanceCostPerHour || 0)}/h</strong>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-stone-500 block">Outros Custos / Hora:</span>
+                              <strong className="text-stone-800">{formatCurrency(viewingEquipment.otherCostPerHour || 0)}/h</strong>
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+
+                <div className="flex justify-end pt-3 border-t border-[#dec1af]/40">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const eq = viewingEquipment;
+                      setViewingEquipment(null);
+                      handleOpenEditEquipment(eq);
+                    }}
+                    className="px-4 py-2 bg-[#954a00] text-white rounded-xl text-xs font-bold hover:bg-[#7a3c00] transition-all flex items-center gap-1.5 mr-2"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                    Editar Ativo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewingEquipment(null)}
+                    className="px-4 py-2 text-xs font-bold text-[#574335] hover:bg-stone-100 rounded-xl transition-all"
+                  >
+                    Fechar
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
       )}
 
@@ -1855,7 +2767,7 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
               value={maintenanceForm.equipmentId}
               onChange={(e) => setMaintenanceForm({ ...maintenanceForm, equipmentId: e.target.value })}
             >
-              {equipment.map((item) => (
+              {equipmentList.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.name}
                 </option>

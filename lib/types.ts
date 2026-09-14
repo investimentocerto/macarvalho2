@@ -2,7 +2,6 @@ export type ViewMode =
   | 'dashboard'
   | 'produtos'
   | 'bom'
-  | 'processos'
   | 'estoque'
   | 'compras'
   | 'vendas'

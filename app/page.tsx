@@ -33,7 +33,6 @@ import { Header } from '@/components/Header';
 import { DashboardView } from '@/components/DashboardView';
 import { ProductsView } from '@/components/ProductsView';
 import { BOMView } from '@/components/BOMView';
-import { ProductionProcessesView } from '@/components/ProductionProcessesView';
 import { InventoryView } from '@/components/InventoryView';
 import { OperationalViews } from '@/components/OperationalViews';
 import { IndustrialCostsView } from '@/components/IndustrialCostsView';
@@ -517,20 +516,6 @@ export default function MaCarvalhoApp() {
             />
           )}
 
-          {currentView === 'processos' && (
-            <ProductionProcessesView
-              processes={productionProcesses}
-              onAddProcess={handleAddProcess}
-              onUpdateProcess={handleUpdateProcess}
-              onDeleteProcess={handleDeleteProcess}
-              equipment={equipment}
-              onAddEquipment={handleAddEquipment}
-              onUpdateEquipment={handleUpdateEquipment}
-              onDeleteEquipment={handleDeleteEquipment}
-              onNotify={showNotification}
-            />
-          )}
-
           {currentView === 'estoque' && (
             <InventoryView
               items={inventoryItems}
@@ -554,6 +539,9 @@ export default function MaCarvalhoApp() {
               inventory={inventoryItems}
               equipment={equipment}
               processes={productionProcesses}
+              onAddEquipment={handleAddEquipment}
+              onUpdateEquipment={handleUpdateEquipment}
+              onDeleteEquipment={handleDeleteEquipment}
               onCloseOrder={handleCloseProductionOrder}
               onNotify={showNotification}
             />
