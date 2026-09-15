@@ -15,7 +15,8 @@ import {
   ProductionProcess,
   Equipment,
   CostEmployee,
-  CostCharge
+  CostCharge,
+  CostSector
 } from '@/lib/types';
 import { 
   INITIAL_PRODUCTS, 
@@ -62,6 +63,7 @@ export default function MaCarvalhoApp() {
   const [salesRecords, setSalesRecords] = useState<SaleRecord[]>(INITIAL_SALES);
   const [costEmployees, setCostEmployees] = useState<CostEmployee[]>([]);
   const [costCharges, setCostCharges] = useState<CostCharge[]>([]);
+  const [costSectors, setCostSectors] = useState<CostSector[]>([]);
 
   // Direct Image Modal State
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
@@ -97,12 +99,28 @@ export default function MaCarvalhoApp() {
     dbService.fetchCostCharges().then((chgs) => {
       if (chgs && chgs.length > 0) setCostCharges(chgs);
     });
+    dbService.fetchCostSectors().then((sectors) => {
+      if (sectors && sectors.length > 0) setCostSectors(sectors);
+    });
 
     if (!isSupabaseConfigured()) return;
 
     const loadRemoteData = async () => {
       try {
-        const [remoteProds, remoteInv, remoteOps, remoteSales, remoteBom, remoteSteps, remoteMovements, remoteProcs, remoteEquipment, remoteEntries, remoteSeparations] = await Promise.all([
+        const [
+          remoteProds,
+          remoteInv,
+          remoteOps,
+          remoteSales,
+          remoteBom,
+          remoteSteps,
+          remoteMovements,
+          remoteProcs,
+          remoteEquipment,
+          remoteEntries,
+          remoteSeparations,
+          remoteSectors,
+        ] = await Promise.all([
           dbService.fetchProducts(),
           dbService.fetchInventory(),
           dbService.fetchProductionOrders(),
@@ -114,6 +132,7 @@ export default function MaCarvalhoApp() {
           dbService.fetchEquipment(),
           dbService.fetchProductionEntries(),
           dbService.fetchProductionMaterialSeparations(),
+          dbService.fetchCostSectors(),
         ]);
 
         if (remoteProds && remoteProds.length > 0) {
@@ -130,6 +149,7 @@ export default function MaCarvalhoApp() {
         if (remoteEquipment && remoteEquipment.length > 0) setEquipment(remoteEquipment);
         if (remoteEntries && remoteEntries.length > 0) setProductionEntries(remoteEntries);
         if (remoteSeparations && remoteSeparations.length > 0) setMaterialSeparations(remoteSeparations);
+        if (remoteSectors && remoteSectors.length > 0) setCostSectors(remoteSectors);
 
         showNotification('Sincronizado com Supabase PostgreSQL!');
       } catch (err) {
@@ -502,6 +522,7 @@ export default function MaCarvalhoApp() {
               processSteps={processSteps}
               inventoryItems={inventoryItems}
               productionProcesses={productionProcesses}
+              manufacturingProcesses={costSectors}
               equipment={equipment}
               onAddComponent={handleAddBOMComponent}
               onUpdateComponent={handleUpdateBOMComponent}
@@ -539,6 +560,7 @@ export default function MaCarvalhoApp() {
               inventory={inventoryItems}
               equipment={equipment}
               processes={productionProcesses}
+              onUpdateSectors={(newSectors) => setCostSectors(newSectors)}
               onAddProcess={handleAddProcess}
               onUpdateProcess={handleUpdateProcess}
               onDeleteProcess={handleDeleteProcess}

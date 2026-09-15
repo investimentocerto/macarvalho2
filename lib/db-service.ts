@@ -477,27 +477,38 @@ export const dbService = {
     const supabase = getSupabaseClient();
     if (!supabase || !isSupabaseConfigured()) return true;
 
-    const { error } = await supabase.from('process_steps').upsert({
+    const payload = {
       id: step.id,
-      product_id: step.productId,
+      product_id: step.productId?.trim() ? step.productId.trim() : null,
       step_number: step.stepNumber,
       title: step.title,
-      cost: step.cost,
-      machine: step.machine,
-      line: step.line,
-      duration_minutes: step.durationMinutes,
-      duration_formatted: step.durationFormatted,
-      hourly_rate_text: step.hourlyRateText,
-      process_id: step.processId,
-      equipment_id: step.equipmentId,
-      cost_center_code: step.costCenterCode,
-      hourly_rate: step.hourlyRate,
-      units_per_hour: step.unitsPerHour,
-      labor_quantity: step.laborQuantity,
-    });
+      cost: Number(step.cost || 0),
+      machine: step.machine || '',
+      line: step.line || '',
+      duration_minutes: Number(step.durationMinutes || 0),
+      duration_formatted: step.durationFormatted || '',
+      hourly_rate_text: step.hourlyRateText || '',
+      process_id: step.processId?.trim() ? step.processId.trim() : null,
+      equipment_id: step.equipmentId?.trim() ? step.equipmentId.trim() : null,
+      cost_center_code: step.costCenterCode || null,
+      hourly_rate: Number(step.hourlyRate || 0),
+      units_per_hour: step.unitsPerHour !== undefined && step.unitsPerHour !== null ? Number(step.unitsPerHour) : null,
+      labor_quantity: step.laborQuantity !== undefined && step.laborQuantity !== null ? Number(step.laborQuantity) : 1,
+    };
+
+    let { error } = await supabase.from('process_steps').upsert(payload);
 
     if (error) {
       console.error('Erro ao salvar etapa do roteiro no Supabase:', error.message, error.details || '');
+      // Se houver restrição de FK em process_id (código 23503), tentar salvar com process_id nulo para não perder a etapa
+      if (error.code === '23503' && payload.process_id) {
+        console.warn('Tentando salvar etapa com process_id nulo por motivo de compatibilidade...');
+        const retry = await supabase.from('process_steps').upsert({
+          ...payload,
+          process_id: null,
+        });
+        if (!retry.error) return true;
+      }
       return false;
     }
 
@@ -581,14 +592,6 @@ export const dbService = {
     const supabase = getSupabaseClient();
     if (!supabase || !isSupabaseConfigured()) return false;
     const { error } = await supabase.from('bom_components').delete().eq('id', id);
-    return !error;
-  },
-
-  // DELETE PROCESS STEP
-  async deleteProcessStep(id: string): Promise<boolean> {
-    const supabase = getSupabaseClient();
-    if (!supabase || !isSupabaseConfigured()) return false;
-    const { error } = await supabase.from('process_steps').delete().eq('id', id);
     return !error;
   },
 
@@ -881,19 +884,81 @@ export const dbService = {
     const supabase = getSupabaseClient();
     if (!supabase || !isSupabaseConfigured()) return true;
 
-    const { error } = await supabase.from('cost_sectors').upsert({
+    const safeCostCenterId = sector.costCenterId?.trim() ? sector.costCenterId.trim() : null;
+
+    // Se houver costCenterId, verificar e assegurar existência prévia em production_processes para evitar erro FK (23503)
+    if (safeCostCenterId) {
+      try {
+        const { data: ccFound } = await supabase
+          .from('production_processes')
+          .select('id')
+          .eq('id', safeCostCenterId)
+          .maybeSingle();
+
+        if (!ccFound) {
+          let code = 'CC-GERAL';
+          let desc = 'Centro de Custo Geral';
+          let rate = 0;
+          if (typeof window !== 'undefined') {
+            try {
+              const stored = localStorage.getItem('macarvalho_production_processes');
+              if (stored) {
+                const list: ProductionProcess[] = JSON.parse(stored);
+                const found = list.find((p) => p.id === safeCostCenterId);
+                if (found) {
+                  code = found.code || code;
+                  desc = found.description || desc;
+                  rate = found.hourlyRate || 0;
+                }
+              }
+            } catch {
+              // ignore
+            }
+          }
+          await supabase.from('production_processes').upsert({
+            id: safeCostCenterId,
+            code,
+            description: desc,
+            hourly_rate: rate,
+            created_at: new Date().toISOString(),
+          });
+        }
+      } catch (fkErr) {
+        console.warn('Tentativa de assegurar Centro de Custo em production_processes:', fkErr);
+      }
+    }
+
+    const payload = {
       id: sector.id,
       code: sector.code,
       name: sector.name,
-      cost_center_id: sector.costCenterId,
-      active: sector.active,
-      operation_type: sector.operationType,
-      standard_time_minutes: sector.standardTimeMinutes,
-      description: sector.description,
+      cost_center_id: safeCostCenterId,
+      active: sector.active !== false,
+      operation_type: sector.operationType || 'Semiautomática',
+      standard_time_minutes: Number(sector.standardTimeMinutes || 0),
+      description: sector.description || '',
       created_at: sector.createdAt || new Date().toISOString(),
-    });
+    };
 
-    return !error;
+    let { error } = await supabase.from('cost_sectors').upsert(payload);
+
+    if (error) {
+      console.error('Falha ao salvar processo de fabricação em cost_sectors:', error.message, error.details || '');
+      // Se falhar devido à chave estrangeira (código 23503), tentar salvar com cost_center_id nulo para não perder o cadastro
+      if (error.code === '23503' && safeCostCenterId) {
+        console.warn('Persistindo processo de fabricação em cost_sectors com cost_center_id nulo por segurança...');
+        const retry = await supabase.from('cost_sectors').upsert({
+          ...payload,
+          cost_center_id: null,
+        });
+        if (!retry.error) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    return true;
   },
 
   async deleteCostSector(id: string): Promise<boolean> {

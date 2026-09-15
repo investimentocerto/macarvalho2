@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
-import { BOMComponent, Equipment, ProcessStepItem, Product, InventoryItem, ProductionProcess } from '@/lib/types';
+import React, { useState, useEffect } from 'react';
+import { BOMComponent, Equipment, ProcessStepItem, Product, InventoryItem, ProductionProcess, CostSector } from '@/lib/types';
+import { dbService } from '@/lib/db-service';
 import { 
   Layers, 
   Plus, 
@@ -21,7 +22,9 @@ import {
   Image as ImageIcon, 
   X,
   PackageCheck,
-  AlertTriangle
+  AlertTriangle,
+  Building2,
+  Workflow
 } from 'lucide-react';
 
 interface BOMViewProps {
@@ -30,6 +33,7 @@ interface BOMViewProps {
   processSteps: ProcessStepItem[];
   inventoryItems?: InventoryItem[];
   productionProcesses?: ProductionProcess[];
+  manufacturingProcesses?: CostSector[];
   equipment?: Equipment[];
   onAddComponent: (comp: BOMComponent) => void;
   onUpdateComponent?: (comp: BOMComponent) => void;
@@ -49,6 +53,7 @@ export const BOMView: React.FC<BOMViewProps> = ({
   processSteps,
   inventoryItems = [],
   productionProcesses = [],
+  manufacturingProcesses = [],
   equipment = [],
   onAddComponent,
   onUpdateComponent,
@@ -64,6 +69,40 @@ export const BOMView: React.FC<BOMViewProps> = ({
   const [showAllComponents, setShowAllComponents] = useState(false);
   const [isAddComponentModalOpen, setIsAddComponentModalOpen] = useState(false);
   const [isAddStepModalOpen, setIsAddStepModalOpen] = useState(false);
+
+  // Cadastro Oficial de Processos de Fabricação (cost_sectors)
+  const [fallbackProcesses, setFallbackProcesses] = useState<CostSector[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (!manufacturingProcesses || manufacturingProcesses.length === 0) {
+      dbService.fetchCostSectors().then((sectors) => {
+        if (isMounted && sectors && sectors.length > 0) {
+          setFallbackProcesses(sectors);
+        }
+      });
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [manufacturingProcesses]);
+
+  const allProcesses = (manufacturingProcesses && manufacturingProcesses.length > 0)
+    ? manufacturingProcesses
+    : fallbackProcesses;
+
+  // Obter processo de fabricação por ID
+  const getSelectedProcess = (id?: string) => {
+    if (!id) return undefined;
+    return allProcesses.find((p) => p.id === id);
+  };
+
+  // Obter Centro de Custo associado ao processo de fabricação
+  const getCostCenterForProcess = (processId?: string) => {
+    const proc = getSelectedProcess(processId);
+    if (!proc) return undefined;
+    return productionProcesses.find((cc) => cc.id === proc.costCenterId);
+  };
 
   // Edit Component Modal State
   const [isEditComponentModalOpen, setIsEditComponentModalOpen] = useState(false);
@@ -249,8 +288,8 @@ export const BOMView: React.FC<BOMViewProps> = ({
   const handleOpenAddStepModal = () => {
     setSelectedProcessId('');
     setNewStepTitle('');
-    setNewStepMachine('Bancada Artesanal');
-    setNewStepLine('Linha Cosméticos');
+    setNewStepMachine('');
+    setNewStepLine('Linha Fabril');
     setNewStepEquipmentId('');
     setNewStepUnitsPerHour('0');
     setIsAddStepModalOpen(true);
@@ -260,22 +299,29 @@ export const BOMView: React.FC<BOMViewProps> = ({
     e.preventDefault();
     if (!newStepTitle) return;
 
+    const selectedProc = getSelectedProcess(selectedProcessId);
+    const linkedCC = getCostCenterForProcess(selectedProcessId);
+    const selectedEquip = equipment.find((item) => item.id === newStepEquipmentId);
+    const durationMin = selectedProc?.standardTimeMinutes || 0;
+    const hourly = linkedCC?.hourlyRate || 0;
+    const calculatedCost = hourly > 0 && durationMin > 0 ? hourly * (durationMin / 60) : 0;
+
     const nextStepNum = (processSteps.length + 1) * 10;
     const step: ProcessStepItem = {
       id: `proc-${Date.now()}`,
       stepNumber: nextStepNum,
       title: newStepTitle,
-      cost: 0,
-      machine: equipment.find((item) => item.id === newStepEquipmentId)?.name || '',
-      line: equipment.find((item) => item.id === newStepEquipmentId)?.name || '',
-      durationMinutes: 0,
-      durationFormatted: '',
-      hourlyRateText: '',
+      cost: calculatedCost,
+      machine: selectedEquip?.name || (linkedCC ? `[${linkedCC.code}] ${linkedCC.description}` : (newStepMachine || 'Bancada Operacional')),
+      line: selectedEquip?.name || newStepLine,
+      durationMinutes: durationMin,
+      durationFormatted: durationMin > 0 ? `${durationMin} min` : '',
+      hourlyRateText: hourly > 0 ? `R$ ${hourly.toFixed(2)}/h` : '',
       processId: selectedProcessId || undefined,
       equipmentId: newStepEquipmentId || undefined,
-      costCenterCode: newStepMachine,
-      hourlyRate: 0,
-      laborQuantity: 0,
+      costCenterCode: linkedCC?.code || newStepMachine,
+      hourlyRate: hourly,
+      laborQuantity: 1,
       unitsPerHour: Number(newStepUnitsPerHour) || 0,
     };
 
@@ -285,7 +331,11 @@ export const BOMView: React.FC<BOMViewProps> = ({
     setNewStepTitle('');
     setNewStepEquipmentId('');
     setNewStepUnitsPerHour('0');
-    onNotify(`Etapa "${newStepTitle}" incluída no roteiro!`);
+    onNotify(
+      linkedCC 
+        ? `Etapa "${newStepTitle}" incluída com vínculo ao Centro de Custo [${linkedCC.code}]!` 
+        : `Etapa "${newStepTitle}" incluída no roteiro!`
+    );
   };
 
   const handleOpenEditStep = (step: ProcessStepItem) => {
@@ -293,8 +343,14 @@ export const BOMView: React.FC<BOMViewProps> = ({
     setEditStepTitle(step.title);
     setEditStepMachine(step.machine || '');
     setEditStepEquipmentId(step.equipmentId || '');
-    setEditStepLine(step.line || 'Linha Cosméticos');
-    setEditStepSelectedProcessId(step.processId || '');
+    setEditStepLine(step.line || 'Linha Fabril');
+
+    // Identificar processo de fabricação pelo ID ou compatibilidade de nome
+    const foundProc = step.processId 
+      ? allProcesses.find((p) => p.id === step.processId)
+      : allProcesses.find((p) => p.name.toLowerCase() === step.title.toLowerCase());
+
+    setEditStepSelectedProcessId(foundProc?.id || step.processId || '');
     setEditStepUnitsPerHour((step.unitsPerHour || 0).toString());
     setIsEditStepModalOpen(true);
   };
@@ -303,14 +359,26 @@ export const BOMView: React.FC<BOMViewProps> = ({
     e.preventDefault();
     if (!editingStep || !editStepTitle) return;
 
+    const selectedProc = getSelectedProcess(editStepSelectedProcessId);
+    const linkedCC = getCostCenterForProcess(editStepSelectedProcessId);
+    const selectedEquip = equipment.find((item) => item.id === editStepEquipmentId);
+    const durationMin = selectedProc?.standardTimeMinutes || editingStep.durationMinutes || 0;
+    const hourly = linkedCC?.hourlyRate || editingStep.hourlyRate || 0;
+    const calculatedCost = hourly > 0 && durationMin > 0 ? hourly * (durationMin / 60) : editingStep.cost;
+
     const updated: ProcessStepItem = {
       ...editingStep,
       title: editStepTitle,
-      machine: equipment.find((item) => item.id === editStepEquipmentId)?.name || editStepMachine,
-      line: equipment.find((item) => item.id === editStepEquipmentId)?.name || editStepLine,
+      cost: calculatedCost,
+      machine: selectedEquip?.name || (linkedCC ? `[${linkedCC.code}] ${linkedCC.description}` : editStepMachine),
+      line: selectedEquip?.name || editStepLine,
+      durationMinutes: durationMin,
+      durationFormatted: durationMin > 0 ? `${durationMin} min` : editingStep.durationFormatted,
+      hourlyRateText: hourly > 0 ? `R$ ${hourly.toFixed(2)}/h` : editingStep.hourlyRateText,
       processId: editStepSelectedProcessId || undefined,
       equipmentId: editStepEquipmentId || undefined,
-      costCenterCode: editStepMachine,
+      costCenterCode: linkedCC?.code || editingStep.costCenterCode || editStepMachine,
+      hourlyRate: hourly,
       unitsPerHour: Number(editStepUnitsPerHour) || 0,
     };
 
@@ -319,7 +387,11 @@ export const BOMView: React.FC<BOMViewProps> = ({
     }
     setIsEditStepModalOpen(false);
     setEditingStep(null);
-    onNotify(`Etapa "${updated.title}" atualizada no roteiro!`);
+    onNotify(
+      linkedCC 
+        ? `Etapa "${updated.title}" atualizada com vínculo ao Centro de Custo [${linkedCC.code}]!` 
+        : `Etapa "${updated.title}" atualizada no roteiro!`
+    );
   };
 
   const displayedComponents = showAllComponents ? components : components.slice(0, 8);
@@ -570,48 +642,82 @@ export const BOMView: React.FC<BOMViewProps> = ({
                       className="bg-[#f4f3f1] hover:bg-[#ffdcc6]/20 p-3.5 rounded-xl border border-[#dec1af]/40 hover:border-[#954a00]/40 hover:shadow-xs transition-all cursor-pointer group"
                       title="Clique para editar esta etapa do roteiro"
                     >
-                      <div className="flex justify-between items-start mb-2">
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-bold text-sm text-[#1a1c1b] group-hover:text-[#954a00] transition-colors">
-                            {step.title}
-                          </h3>
-                        </div>
-                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            onClick={() => handleOpenEditStep(step)}
-                            className="p-1 text-[#574335] hover:text-[#954a00] hover:bg-white rounded transition-colors"
-                            title="Editar etapa"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          {onRemoveProcessStep && (
-                            <button
-                              onClick={() => {
-                                setDeleteConfirm({
-                                  type: 'step',
-                                  id: step.id,
-                                  name: step.title,
-                                });
-                              }}
-                              className="p-1 text-stone-400 hover:text-red-600 hover:bg-white rounded transition-colors"
-                              title="Remover etapa"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
+                      {(() => {
+                        const linkedProc = step.processId 
+                          ? allProcesses.find((p) => p.id === step.processId)
+                          : allProcesses.find((p) => p.name.toLowerCase() === step.title.toLowerCase());
+                        const linkedCC = linkedProc
+                          ? productionProcesses.find((cc) => cc.id === linkedProc.costCenterId)
+                          : productionProcesses.find((cc) => cc.code === step.costCenterCode || cc.id === step.processId);
 
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-1.5 gap-x-2 text-xs text-[#574335]">
-                        <div className="flex items-center gap-1.5">
-                          <Cpu className="w-3.5 h-3.5 text-[#954a00]" />
-                          <span className="truncate font-medium">{step.machine}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <Factory className="w-3.5 h-3.5 text-[#954a00]" />
-                          <span className="truncate">{step.line}</span>
-                        </div>
-                      </div>
+                        return (
+                          <>
+                            <div className="flex justify-between items-start mb-2">
+                              <div className="flex flex-col gap-1">
+                                <h3 className="font-bold text-sm text-[#1a1c1b] group-hover:text-[#954a00] transition-colors">
+                                  {step.title}
+                                </h3>
+                                
+                                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                                  {linkedProc && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-stone-200/80 text-[#574335] text-[10px] font-semibold border border-stone-300/60">
+                                      <Workflow className="w-3 h-3 text-[#954a00]" />
+                                      [{linkedProc.code}] {linkedProc.name}
+                                    </span>
+                                  )}
+                                  {linkedCC && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 text-[10px] font-bold border border-amber-300">
+                                      <Building2 className="w-3 h-3 text-[#954a00]" />
+                                      CC: [{linkedCC.code}] {linkedCC.description}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  onClick={() => handleOpenEditStep(step)}
+                                  className="p-1 text-[#574335] hover:text-[#954a00] hover:bg-white rounded transition-colors"
+                                  title="Editar etapa"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                {onRemoveProcessStep && (
+                                  <button
+                                    onClick={() => {
+                                      setDeleteConfirm({
+                                        type: 'step',
+                                        id: step.id,
+                                        name: step.title,
+                                      });
+                                    }}
+                                    className="p-1 text-stone-400 hover:text-red-600 hover:bg-white rounded transition-colors"
+                                    title="Remover etapa"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-1.5 gap-x-2 text-xs text-[#574335] pt-1 border-t border-[#dec1af]/30">
+                              <div className="flex items-center gap-1.5">
+                                <Cpu className="w-3.5 h-3.5 text-[#954a00]" />
+                                <span className="truncate font-medium">{step.machine}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <Factory className="w-3.5 h-3.5 text-[#954a00]" />
+                                <span className="truncate">{step.line}</span>
+                              </div>
+                              {step.unitsPerHour ? (
+                                <div className="flex items-center gap-1.5 col-span-2 sm:col-span-1">
+                                  <TrendingUp className="w-3.5 h-3.5 text-emerald-700" />
+                                  <span className="font-semibold text-emerald-800">{step.unitsPerHour} un/h</span>
+                                </div>
+                              ) : null}
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 ))}
@@ -972,35 +1078,85 @@ export const BOMView: React.FC<BOMViewProps> = ({
               {/* Seleção do processo de fabricação */}
               <div>
                 <label className="block font-bold text-[#574335] mb-1 flex items-center justify-between">
-                  <span>Cód. Centro de Custo *</span>
+                  <span className="flex items-center gap-1.5">
+                    <Workflow className="w-3.5 h-3.5 text-[#954a00]" />
+                    Processo de Fabricação *
+                  </span>
+                  <span className="text-[10px] text-stone-500 font-normal">Fonte: Custos Industriais</span>
                 </label>
                 <select
+                  required
                   value={selectedProcessId}
                   onChange={(e) => {
                     const pId = e.target.value;
                     setSelectedProcessId(pId);
                     setNewStepEquipmentId('');
-                    const proc = productionProcesses.find((p) => p.id === pId);
+                    const proc = getSelectedProcess(pId);
+                    const cc = getCostCenterForProcess(pId);
                     if (proc) {
-                      setNewStepTitle(proc.description);
-                      setNewStepMachine(proc.code);
+                      setNewStepTitle(proc.name);
+                      if (cc) setNewStepMachine(cc.code);
                     }
                   }}
                   className="w-full p-2.5 border border-[#dec1af] rounded-xl bg-white font-medium focus:ring-2 focus:ring-[#954a00]/20 focus:border-[#954a00]"
                 >
-                  <option value="">-- Selecione o centro de custo --</option>
-                  {productionProcesses.map((proc) => (
-                    <option key={proc.id} value={proc.id}>
-                      [{proc.code}] {proc.description}
-                    </option>
-                  ))}
+                  <option value="">-- Selecione o Processo de Fabricação --</option>
+                  {allProcesses
+                    .filter((p) => p.active !== false)
+                    .map((proc) => {
+                      const linkedCC = productionProcesses.find((cc) => cc.id === proc.costCenterId);
+                      return (
+                        <option key={proc.id} value={proc.id}>
+                          [{proc.code}] {proc.name} {linkedCC ? `→ CC: [${linkedCC.code}] ${linkedCC.description}` : ''}
+                        </option>
+                      );
+                    })}
                 </select>
-                {productionProcesses.length === 0 && (
-                  <p className="text-[10px] text-amber-800 mt-1">
-                    Nenhum processo cadastrado ainda. Você pode cadastrar em &quot;Processos Produtivos&quot; no menu lateral.
+                {allProcesses.length === 0 && (
+                  <p className="text-[10px] text-amber-800 mt-1 bg-amber-50 p-2 rounded-lg border border-amber-200">
+                    Nenhum processo cadastrado. Cadastre em <strong>Custos Industriais → Processos de Fabricação</strong>.
                   </p>
                 )}
               </div>
+
+              {/* Centro de Custo Vinculado (Exibição Automática) */}
+              {(() => {
+                const selectedProc = getSelectedProcess(selectedProcessId);
+                const linkedCC = getCostCenterForProcess(selectedProcessId);
+                if (selectedProc) {
+                  return (
+                    <div className="p-3 bg-amber-50/80 border border-amber-300/80 rounded-xl space-y-1">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Building2 className="w-4 h-4 text-[#954a00]" />
+                          <span className="text-[10px] font-bold text-amber-900 uppercase tracking-wider">
+                            Centro de Custo Vinculado ao Processo:
+                          </span>
+                        </div>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded font-bold bg-emerald-100 text-emerald-800">
+                          Automático
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between pt-0.5">
+                        <p className="font-bold text-xs text-[#1a1c1b]">
+                          {linkedCC ? `[${linkedCC.code}] ${linkedCC.description}` : 'Centro de Custo Padrão'}
+                        </p>
+                        {linkedCC?.hourlyRate !== undefined && (
+                          <span className="text-xs font-semibold text-[#574335]">
+                            Taxa: R$ {Number(linkedCC.hourlyRate).toFixed(2)}/h
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="p-2.5 bg-stone-50 border border-dashed border-[#dec1af] rounded-xl text-[11px] text-stone-500 flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-stone-400 shrink-0" />
+                    <span>Selecione um processo de fabricação para carregar o Centro de Custo cadastrado.</span>
+                  </div>
+                );
+              })()}
 
               <div>
                 <label className="block font-bold text-[#574335] mb-1">Título / Descrição da Etapa *</label>
@@ -1015,12 +1171,19 @@ export const BOMView: React.FC<BOMViewProps> = ({
               </div>
 
               <div>
-                <label className="block font-bold text-[#574335] mb-1">Máquina *</label>
-                <select required value={newStepEquipmentId} onChange={(e) => setNewStepEquipmentId(e.target.value)} className="w-full p-2.5 border border-[#dec1af] rounded-xl bg-white">
-                  <option value="">-- Selecione um equipamento --</option>
-                  {equipment.filter((item) => item.processId === selectedProcessId).map((item) => <option key={item.id} value={item.id}>[{item.code}] {item.name}</option>)}
+                <label className="block font-bold text-[#574335] mb-1">Máquina / Equipamento</label>
+                <select
+                  value={newStepEquipmentId}
+                  onChange={(e) => setNewStepEquipmentId(e.target.value)}
+                  className="w-full p-2.5 border border-[#dec1af] rounded-xl bg-white"
+                >
+                  <option value="">-- Selecione um equipamento (ou padrão do Centro de Custo) --</option>
+                  {equipment.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      [{item.code}] {item.name}
+                    </option>
+                  ))}
                 </select>
-                {selectedProcessId && equipment.filter((item) => item.processId === selectedProcessId).length === 0 && <p className="text-[10px] text-amber-800 mt-1">Nenhum equipamento cadastrado para este centro de custo.</p>}
               </div>
 
               <div>
@@ -1072,30 +1235,78 @@ export const BOMView: React.FC<BOMViewProps> = ({
               {/* Seleção do processo de fabricação */}
               <div>
                 <label className="block font-bold text-[#574335] mb-1 flex items-center justify-between">
-                  <span>Cód. Centro de Custo *</span>
+                  <span className="flex items-center gap-1.5">
+                    <Workflow className="w-3.5 h-3.5 text-[#954a00]" />
+                    Processo de Fabricação *
+                  </span>
+                  <span className="text-[10px] text-stone-500 font-normal">Fonte: Custos Industriais</span>
                 </label>
                 <select
+                  required
                   value={editStepSelectedProcessId}
                   onChange={(e) => {
                     const pId = e.target.value;
                     setEditStepSelectedProcessId(pId);
                     setEditStepEquipmentId('');
-                    const proc = productionProcesses.find((p) => p.id === pId);
+                    const proc = getSelectedProcess(pId);
+                    const cc = getCostCenterForProcess(pId);
                     if (proc) {
-                      setEditStepTitle(proc.description);
-                      setEditStepMachine(proc.code);
+                      setEditStepTitle(proc.name);
+                      if (cc) setEditStepMachine(cc.code);
                     }
                   }}
                   className="w-full p-2.5 border border-[#dec1af] rounded-xl bg-white font-medium focus:ring-2 focus:ring-[#954a00]/20 focus:border-[#954a00]"
                 >
-                  <option value="">-- Selecione o centro de custo --</option>
-                  {productionProcesses.map((proc) => (
-                    <option key={proc.id} value={proc.id}>
-                      [{proc.code}] {proc.description}
-                    </option>
-                  ))}
+                  <option value="">-- Selecione o Processo de Fabricação --</option>
+                  {allProcesses.map((proc) => {
+                    const linkedCC = productionProcesses.find((cc) => cc.id === proc.costCenterId);
+                    return (
+                      <option key={proc.id} value={proc.id}>
+                        [{proc.code}] {proc.name} {linkedCC ? `→ CC: [${linkedCC.code}] ${linkedCC.description}` : ''} {proc.active === false ? '(Inativo)' : ''}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
+
+              {/* Centro de Custo Vinculado (Exibição Automática) */}
+              {(() => {
+                const editProc = getSelectedProcess(editStepSelectedProcessId);
+                const linkedCC = getCostCenterForProcess(editStepSelectedProcessId);
+                if (editProc) {
+                  return (
+                    <div className="p-3 bg-amber-50/80 border border-amber-300/80 rounded-xl space-y-1">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Building2 className="w-4 h-4 text-[#954a00]" />
+                          <span className="text-[10px] font-bold text-amber-900 uppercase tracking-wider">
+                            Centro de Custo Vinculado ao Processo:
+                          </span>
+                        </div>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded font-bold bg-emerald-100 text-emerald-800">
+                          Automático
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between pt-0.5">
+                        <p className="font-bold text-xs text-[#1a1c1b]">
+                          {linkedCC ? `[${linkedCC.code}] ${linkedCC.description}` : 'Centro de Custo Padrão'}
+                        </p>
+                        {linkedCC?.hourlyRate !== undefined && (
+                          <span className="text-xs font-semibold text-[#574335]">
+                            Taxa: R$ {Number(linkedCC.hourlyRate).toFixed(2)}/h
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="p-2.5 bg-stone-50 border border-dashed border-[#dec1af] rounded-xl text-[11px] text-stone-500 flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-stone-400 shrink-0" />
+                    <span>Selecione um processo de fabricação para carregar o Centro de Custo cadastrado.</span>
+                  </div>
+                );
+              })()}
 
               <div>
                 <label className="block font-bold text-[#574335] mb-1">Título / Descrição da Etapa *</label>
@@ -1109,12 +1320,19 @@ export const BOMView: React.FC<BOMViewProps> = ({
               </div>
 
               <div>
-                <label className="block font-bold text-[#574335] mb-1">Máquina *</label>
-                <select required value={editStepEquipmentId} onChange={(e) => setEditStepEquipmentId(e.target.value)} className="w-full p-2.5 border border-[#dec1af] rounded-xl bg-white">
-                  <option value="">-- Selecione um equipamento --</option>
-                  {equipment.filter((item) => item.processId === editStepSelectedProcessId).map((item) => <option key={item.id} value={item.id}>[{item.code}] {item.name}</option>)}
+                <label className="block font-bold text-[#574335] mb-1">Máquina / Equipamento</label>
+                <select
+                  value={editStepEquipmentId}
+                  onChange={(e) => setEditStepEquipmentId(e.target.value)}
+                  className="w-full p-2.5 border border-[#dec1af] rounded-xl bg-white"
+                >
+                  <option value="">-- Selecione um equipamento (ou padrão do Centro de Custo) --</option>
+                  {equipment.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      [{item.code}] {item.name}
+                    </option>
+                  ))}
                 </select>
-                {editStepSelectedProcessId && equipment.filter((item) => item.processId === editStepSelectedProcessId).length === 0 && <p className="text-[10px] text-amber-800 mt-1">Nenhum equipamento cadastrado para este centro de custo.</p>}
               </div>
 
               <div>

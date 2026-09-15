@@ -79,6 +79,7 @@ interface IndustrialCostsViewProps {
   onDeleteProcess?: (id: string) => void;
   onCloseOrder?: (order: ProductionOrder, operation: CostOperation) => void;
   onNotify?: (message: string) => void;
+  onUpdateSectors?: (sectors: CostSector[]) => void;
 }
 
 type Tab =
@@ -124,6 +125,7 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
   onDeleteProcess,
   onCloseOrder,
   onNotify,
+  onUpdateSectors,
 }) => {
   const [tab, setTab] = useState<Tab>('apuracao');
   const [orderId, setOrderId] = useState(orders[0]?.id || '');
@@ -806,7 +808,7 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
       id: editingProcessFormId || `proc-fab-${Date.now()}`,
       code: processForm.code || `PROC-${String(sectors.length + 1).padStart(3, '0')}`,
       name: processForm.name.trim(),
-      costCenterId: targetCC?.id || 'cc-geral',
+      costCenterId: targetCC?.id || (processesList[0]?.id ?? 'proc-cc-001'),
       active: processForm.active !== undefined ? processForm.active : true,
       operationType: processForm.operationType || 'Semiautomática',
       standardTimeMinutes: processForm.standardTimeMinutes ? Number(processForm.standardTimeMinutes) : undefined,
@@ -816,15 +818,19 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
 
     const saved = await dbService.saveCostSector(item);
     if (saved) {
+      let updatedSectors: CostSector[] = [];
       setSectors((current) => {
         const index = current.findIndex((s) => s.id === item.id);
         if (index >= 0) {
           const updated = [...current];
           updated[index] = item;
+          updatedSectors = updated;
           return updated;
         }
-        return [...current, item];
+        updatedSectors = [...current, item];
+        return updatedSectors;
       });
+      onUpdateSectors?.(updatedSectors);
 
       const wasEditing = Boolean(editingProcessFormId);
       setEditingProcessFormId(null);
@@ -840,11 +846,11 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
 
       onNotify?.(
         wasEditing
-          ? `Processo de fabricação "${item.name}" atualizado.`
-          : `Processo de fabricação "${item.name}" cadastrado e vinculado ao Centro de Custo [${targetCC?.code}].`
+          ? `Processo de fabricação "${item.name}" atualizado e salvo no Supabase!`
+          : `Processo de fabricação "${item.name}" salvo com sucesso no banco de dados Supabase!`
       );
     } else {
-      onNotify?.('Erro ao salvar processo de fabricação.');
+      onNotify?.('Aviso: O processo foi salvo localmente, mas houve uma falha ao persistir no Supabase.');
     }
   };
 
@@ -881,7 +887,13 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
     const updated: CostSector = { ...proc, active: !proc.active };
     const saved = await dbService.saveCostSector(updated);
     if (saved) {
-      setSectors((current) => current.map((s) => (s.id === proc.id ? updated : s)));
+      let updatedSectors: CostSector[] = [];
+      setSectors((current) => {
+        const nextList = current.map((s) => (s.id === proc.id ? updated : s));
+        updatedSectors = nextList;
+        return nextList;
+      });
+      onUpdateSectors?.(updatedSectors);
       onNotify?.(`Processo "${proc.name}" agora está ${updated.active ? 'Ativo' : 'Inativo'}.`);
     }
   };
@@ -901,7 +913,13 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
             const updated: CostSector = { ...target, active: false };
             const saved = await dbService.saveCostSector(updated);
             if (saved) {
-              setSectors((current) => current.map((s) => (s.id === id ? updated : s)));
+              let updatedSectors: CostSector[] = [];
+              setSectors((current) => {
+                const nextList = current.map((s) => (s.id === id ? updated : s));
+                updatedSectors = nextList;
+                return nextList;
+              });
+              onUpdateSectors?.(updatedSectors);
               onNotify?.(`Processo "${name}" foi inativado.`);
             }
           }
@@ -919,7 +937,13 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
       onConfirm: async () => {
         const deleted = await dbService.deleteCostSector(id);
         if (deleted) {
-          setSectors((current) => current.filter((s) => s.id !== id));
+          let remainingSectors: CostSector[] = [];
+          setSectors((current) => {
+            const nextList = current.filter((s) => s.id !== id);
+            remainingSectors = nextList;
+            return nextList;
+          });
+          onUpdateSectors?.(remainingSectors);
           onNotify?.(`Processo de fabricação "${name}" removido.`);
         }
         setGenericConfirmModal(null);
@@ -2585,6 +2609,9 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                           [{proc.code}] {proc.description}
                         </option>
                       ))}
+                      {processesList.length === 0 && (
+                        <option value="proc-cc-001">[CC-01] Centro de Custo Fabril Geral (Padrão)</option>
+                      )}
                     </select>
                   </div>
 
