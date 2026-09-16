@@ -372,6 +372,9 @@ export interface CostOperation {
   modPerBar?: number;
   moiPerBar?: number;
   totalLaborPerBar?: number;
+  analysisMonth?: string;
+  monthIndirectTotal?: number;
+  indirectCostSharePercent?: number;
 }
 
 export interface SaleRecord {

@@ -306,7 +306,24 @@ ALTER TABLE public.production_entries ADD COLUMN IF NOT EXISTS mod_cost NUMERIC 
 ALTER TABLE public.production_entries ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE public.production_entries ENABLE ROW LEVEL SECURITY;
 
--- 10. Row Level Security & Políticas de Acesso
+-- 10. Custos Indiretos Gerais de Fabricação (CIF) com Competência/Data
+CREATE TABLE IF NOT EXISTS public.cost_indirect (
+    id TEXT PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    category TEXT NOT NULL,
+    process_id TEXT REFERENCES public.production_processes(id) ON DELETE SET NULL,
+    amount NUMERIC NOT NULL DEFAULT 0,
+    competence DATE NOT NULL,
+    classification TEXT NOT NULL DEFAULT 'FIXO' CHECK (classification IN ('FIXO', 'VARIAVEL')),
+    driver_id TEXT,
+    observation TEXT NOT NULL DEFAULT '',
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE public.cost_indirect ENABLE ROW LEVEL SECURITY;
+
+-- 11. Row Level Security & Políticas de Acesso
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bom_components ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.process_steps ENABLE ROW LEVEL SECURITY;
@@ -321,9 +338,12 @@ ALTER TABLE public.cost_charges ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cost_employees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cost_employee_charges ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cost_employee_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cost_indirect ENABLE ROW LEVEL SECURITY;
 
 DO $$
 BEGIN
+    DROP POLICY IF EXISTS "Public access cost_indirect" ON public.cost_indirect;
+    CREATE POLICY "Public access cost_indirect" ON public.cost_indirect FOR ALL USING (true) WITH CHECK (true);
     DROP POLICY IF EXISTS "Public access products" ON public.products;
     CREATE POLICY "Public access products" ON public.products FOR ALL USING (true) WITH CHECK (true);
 

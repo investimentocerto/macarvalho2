@@ -524,6 +524,7 @@ export interface ProductionCostInputs {
   indirectCosts?: IndirectCost[];
   maintenance?: EquipmentMaintenance[];
   moiDriver?: CostDriverType;
+  analysisMonth?: string;
 }
 
 export function calculateProductionOrderCost(inputs: ProductionCostInputs): CostOperation {
@@ -642,10 +643,68 @@ export function calculateProductionOrderCost(inputs: ProductionCostInputs): Cost
   );
   const indirectLaborCost = moiResult.orderAllocatedMoi;
 
-  // 3. Outros custos indiretos (além de MOI)
-  const baseIndirectCost = (inputs.indirectCosts || [])
-    .filter((cost) => cost.active)
-    .reduce((sum, cost) => sum + cost.amount, 0);
+  // 3. Outros custos indiretos (além de MOI) com Rateio Mensal por Competência
+  // Identifica o mês de competência analisado (ex: '2026-09')
+  const targetMonth = inputs.analysisMonth ||
+    (inputs.order.openingDate || inputs.order.productionStart || new Date().toISOString()).slice(0, 7);
+
+  // Filtra os custos indiretos ativos da competência analisada
+  const activeIndirect = (inputs.indirectCosts || []).filter((cost) => cost.active !== false);
+  const monthIndirectCosts = activeIndirect.filter((cost) => {
+    if (!cost.competence) return false;
+    return cost.competence.slice(0, 7) === targetMonth;
+  });
+
+  // Se houver lançamentos no mês de competência, usa os custos desse mês;
+  // Caso não haja com essa competência exata, usa o total ativo (para não zerar se ainda não tiver filtro específico)
+  const relevantIndirectCosts = monthIndirectCosts.length > 0 ? monthIndirectCosts : activeIndirect;
+  const monthIndirectTotal = relevantIndirectCosts.reduce((sum, cost) => sum + cost.amount, 0);
+
+  // Rateio entre as OPs da mesma competência mensal
+  const monthOrders = allOrders.filter((ord) => {
+    const ordMonth = (ord.openingDate || ord.productionStart || '').slice(0, 7);
+    return ordMonth === targetMonth;
+  });
+  const ordersToApportion = monthOrders.length > 0 && monthOrders.some((o) => o.id === inputs.order.id)
+    ? monthOrders
+    : allOrders;
+
+  let indirectShareRatio = 1 / Math.max(1, ordersToApportion.length);
+  const driver = inputs.moiDriver || 'HORAS_PRODUTIVAS';
+
+  if (driver === 'HORAS_PRODUTIVAS') {
+    let targetOpHours = 0;
+    for (const ent of orderEntries) {
+      targetOpHours += calculateDurationHours(ent.startedAt, ent.endedAt);
+      if (ent.hoursWorked && Number(ent.hoursWorked) > 0) targetOpHours += Number(ent.hoursWorked);
+    }
+    if (targetOpHours <= 0) targetOpHours = 1;
+
+    let totalMonthHours = 0;
+    for (const ord of ordersToApportion) {
+      const oEntries = inputs.entries.filter((e) => e.orderId === ord.id);
+      let oHours = 0;
+      for (const ent of oEntries) {
+        oHours += calculateDurationHours(ent.startedAt, ent.endedAt);
+        if (ent.hoursWorked && Number(ent.hoursWorked) > 0) oHours += Number(ent.hoursWorked);
+      }
+      totalMonthHours += oHours > 0 ? oHours : 1;
+    }
+    if (totalMonthHours > 0) {
+      indirectShareRatio = targetOpHours / totalMonthHours;
+    }
+  } else if (driver === 'QUANTIDADE_PRODUZIDA') {
+    const targetQty = Math.max(1, inputs.order.producedQuantity || inputs.order.quantity || 1);
+    const totalMonthQty = ordersToApportion.reduce(
+      (sum, o) => sum + Math.max(1, o.producedQuantity || o.quantity || 1),
+      0
+    );
+    if (totalMonthQty > 0) {
+      indirectShareRatio = targetQty / totalMonthQty;
+    }
+  }
+
+  const baseIndirectCost = monthIndirectTotal * indirectShareRatio;
   const otherIndirectCost = baseIndirectCost + otherEquipmentCost;
 
   // Quantidade de barras boas produzidas (etapa de embalagem / final)
@@ -692,5 +751,8 @@ export function calculateProductionOrderCost(inputs: ProductionCostInputs): Cost
     modPerBar: barSummary.directLaborPerBar,
     moiPerBar: barSummary.indirectLaborPerBar,
     totalLaborPerBar: barSummary.totalLaborPerBar,
+    analysisMonth: targetMonth,
+    monthIndirectTotal,
+    indirectCostSharePercent: Math.round(indirectShareRatio * 10000) / 100,
   };
 }

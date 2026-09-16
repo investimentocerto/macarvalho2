@@ -1381,6 +1381,13 @@ export const dbService = {
     return !error;
   },
 
+  async deleteIndirectCost(id: string): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !isSupabaseConfigured()) return true;
+    const { error } = await supabase.from('cost_indirect').delete().eq('id', id);
+    return !error;
+  },
+
   async fetchMaintenance(): Promise<EquipmentMaintenance[] | null> {
     const supabase = getSupabaseClient();
     if (!supabase || !isSupabaseConfigured()) return null;

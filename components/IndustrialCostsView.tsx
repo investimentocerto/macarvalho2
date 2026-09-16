@@ -32,6 +32,7 @@ import {
   Save,
   AlertTriangle,
   Workflow,
+  Calendar,
 } from 'lucide-react';
 import { dbService } from '@/lib/db-service';
 import {
@@ -252,14 +253,22 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
     chargeType: 'ENCARGO' as CostCharge['chargeType'],
   });
 
-  // Estado do formulário de indiretos
+  // Estado do formulário de indiretos com data de lançamento e rateio por mês
   const [indirect, setIndirect] = useState({
     code: '',
     description: '',
     category: 'Energia Elétrica Industrial',
-    amount: '1500',
+    amount: '',
     competence: new Date().toISOString().slice(0, 10),
+    classification: 'FIXO' as 'FIXO' | 'VARIAVEL',
+    processId: '',
+    observation: '',
   });
+
+  // Filtro de competência mensal para a aba de Custos Indiretos (ex: '2026-09' ou 'ALL')
+  const [indirectMonthFilter, setIndirectMonthFilter] = useState<string>(
+    new Date().toISOString().slice(0, 7)
+  );
 
   // Estado do formulário de manutenção
   const [maintenanceForm, setMaintenanceForm] = useState({
@@ -290,7 +299,46 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
       if (loadedSectors) {
         setSectors(loadedSectors);
       }
-      if (loadedIndirect) setIndirectCosts(loadedIndirect);
+      if (loadedIndirect && loadedIndirect.length > 0) {
+        setIndirectCosts(loadedIndirect);
+      } else {
+        const curMonth = new Date().toISOString().slice(0, 7);
+        setIndirectCosts([
+          {
+            id: 'cif-1',
+            code: 'CIF-001',
+            description: 'Energia Elétrica Fabril',
+            category: 'Energia Elétrica Industrial',
+            amount: 3200,
+            competence: `${curMonth}-05`,
+            classification: 'FIXO',
+            observation: 'Fatura de energia fabril - Concessionária',
+            active: true,
+          },
+          {
+            id: 'cif-2',
+            code: 'CIF-002',
+            description: 'Aluguel do Galpão Industrial',
+            category: 'Aluguel Fabril',
+            amount: 4500,
+            competence: `${curMonth}-01`,
+            classification: 'FIXO',
+            observation: 'Locação predial setor fabril',
+            active: true,
+          },
+          {
+            id: 'cif-3',
+            code: 'CIF-003',
+            description: 'Água e Saneamento Industrial',
+            category: 'Utilidades',
+            amount: 680,
+            competence: `${curMonth}-10`,
+            classification: 'FIXO',
+            observation: 'Abastecimento água industrial',
+            active: true,
+          },
+        ]);
+      }
       if (loadedMaintenance) setMaintenance(loadedMaintenance);
     });
   }, []);
@@ -1020,24 +1068,79 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
     setEmpForm((prev) => ({ ...prev, selectedChargeIds: [] }));
   };
 
-  // Salvar Custo Indireto
+  // Salvar Custo Indireto com validação de data de lançamento e valor
   const saveIndirect = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (!indirect.description.trim()) {
+      onNotify?.('Informe a descrição do custo indireto.');
+      return;
+    }
+    const val = Number(indirect.amount);
+    if (isNaN(val) || val <= 0) {
+      onNotify?.('Informe um valor monetário válido maior que zero.');
+      return;
+    }
+    if (!indirect.competence) {
+      onNotify?.('Informe a data de lançamento para o rateio por competência.');
+      return;
+    }
+
+    const nextSeq = indirectCosts.length + 1;
+    const generatedCode = indirect.code.trim() || `CIF-${String(nextSeq).padStart(3, '0')}`;
     const item: IndirectCost = {
       id: `indirect-${Date.now()}`,
-      code: indirect.code || `CIF-${String(indirectCosts.length + 1).padStart(3, '0')}`,
-      description: indirect.description,
-      category: indirect.category,
-      amount: Number(indirect.amount) || 0,
+      code: generatedCode,
+      description: indirect.description.trim(),
+      category: indirect.category.trim() || 'Custos Gerais Fabris',
+      processId: indirect.processId || undefined,
+      amount: val,
       competence: indirect.competence,
-      classification: 'FIXO',
-      observation: '',
+      classification: indirect.classification || 'FIXO',
+      observation: indirect.observation.trim(),
       active: true,
     };
+
     if (await dbService.saveIndirectCost(item)) {
       setIndirectCosts((current) => [item, ...current]);
-      onNotify?.('Custo indireto cadastrado.');
+      setIndirect({
+        code: '',
+        description: '',
+        category: 'Energia Elétrica Industrial',
+        amount: '',
+        competence: indirect.competence, // mantém a data para agilizar novos lançamentos no mesmo mês
+        classification: 'FIXO',
+        processId: '',
+        observation: '',
+      });
+      onNotify?.(`Custo indireto ${item.code} cadastrado com sucesso.`);
+    } else {
+      onNotify?.('Erro ao salvar custo indireto no banco de dados.');
     }
+  };
+
+  // Excluir Custo Indireto com confirmação segura
+  const handleDeleteIndirect = (item: IndirectCost) => {
+    setGenericConfirmModal({
+      title: 'Excluir Custo Indireto (CIF)',
+      description: `Tem certeza que deseja excluir o custo "${item.code} - ${item.description}" lançado em ${item.competence}?`,
+      details: [
+        `Valor: ${formatCurrency(item.amount)}`,
+        `Data/Competência: ${item.competence}`,
+        `Categoria: ${item.category} (${item.classification})`,
+        'Este custo será removido imediatamente e o rateio mensal das Ordens de Produção será recalculado.',
+      ],
+      confirmLabel: 'Sim, Excluir Lançamento',
+      isDestructive: true,
+      onConfirm: async () => {
+        const ok = await dbService.deleteIndirectCost(item.id);
+        if (ok) {
+          setIndirectCosts((prev) => prev.filter((c) => c.id !== item.id));
+          onNotify?.(`Custo indireto ${item.code} excluído com sucesso.`);
+        } else {
+          onNotify?.('Erro ao excluir custo indireto no banco de dados.');
+        }
+      },
+    });
   };
 
   // Salvar Manutenção
@@ -1384,10 +1487,22 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
                       </div>
 
                       <div className="rounded-xl bg-[#f4f3f1] p-3.5 border border-[#e9e8e6]">
-                        <span className="block text-[11px] font-bold text-[#574335]">CIF - Outros Custos Indiretos</span>
+                        <div className="flex items-center justify-between">
+                          <span className="block text-[11px] font-bold text-[#574335]">CIF - Outros Custos Indiretos</span>
+                          {operation.analysisMonth && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">
+                              Mês {operation.analysisMonth.slice(5, 7)}/{operation.analysisMonth.slice(0, 4)}
+                            </span>
+                          )}
+                        </div>
                         <strong className="text-lg font-black text-[#1a1c1b]">
                           {formatCurrency(operation.otherIndirectCost)}
                         </strong>
+                        {operation.monthIndirectTotal !== undefined && operation.monthIndirectTotal > 0 && (
+                          <span className="block text-[10px] text-stone-500 mt-0.5">
+                            Rateio de {formatCurrency(operation.monthIndirectTotal)} do mês ({operation.indirectCostSharePercent || 0}%)
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -3720,53 +3835,419 @@ export const IndustrialCostsView: React.FC<IndustrialCostsViewProps> = ({
       {/* ========================================================================= */}
       {/* ABA: CUSTOS INDIRETOS */}
       {/* ========================================================================= */}
-      {tab === 'indiretos' && (
-        <section className="bg-white rounded-2xl border border-[#dec1af] p-6 shadow-xs space-y-4">
-          <h2 className="font-black text-lg text-[#1a1c1b]">Custos Indiretos Gerais de Fabricação (CIF)</h2>
-          <form onSubmit={saveIndirect} className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4">
-            <input
-              type="text"
-              placeholder="Código"
-              value={indirect.code}
-              onChange={(e) => setIndirect({ ...indirect, code: e.target.value })}
-              className={inputClass}
-            />
-            <input
-              type="text"
-              placeholder="Descrição"
-              value={indirect.description}
-              onChange={(e) => setIndirect({ ...indirect, description: e.target.value })}
-              className={inputClass}
-            />
-            <input
-              type="text"
-              placeholder="Categoria"
-              value={indirect.category}
-              onChange={(e) => setIndirect({ ...indirect, category: e.target.value })}
-              className={inputClass}
-            />
-            <input
-              type="number"
-              placeholder="Valor"
-              value={indirect.amount}
-              onChange={(e) => setIndirect({ ...indirect, amount: e.target.value })}
-              className={inputClass}
-            />
-            <button className="px-3 py-2 bg-[#954a00] text-white rounded-xl font-bold text-xs">
-              <Plus className="w-4 h-4 inline mr-1" />
-              Cadastrar
-            </button>
-          </form>
-          <div className="space-y-2 mt-4">
-            {indirectCosts.map((item) => (
-              <div key={item.id} className="p-3 rounded-lg bg-[#f4f3f1] text-xs flex justify-between">
-                <span>{item.code} - {item.description} ({item.category})</span>
-                <strong>{formatCurrency(item.amount)}</strong>
+      {tab === 'indiretos' && (() => {
+        // Custos indiretos filtrados por competência mensal
+        const filteredIndirectCosts = indirectMonthFilter === 'ALL'
+          ? indirectCosts
+          : indirectCosts.filter((c) => (c.competence || '').slice(0, 7) === indirectMonthFilter);
+
+        const totalFilteredIndirect = filteredIndirectCosts.reduce(
+          (sum, c) => sum + (c.active !== false ? c.amount : 0),
+          0
+        );
+
+        // OPs do mês selecionado
+        const ordersInMonth = indirectMonthFilter === 'ALL'
+          ? orders
+          : orders.filter((o) => (o.openingDate || o.productionStart || '').slice(0, 7) === indirectMonthFilter);
+
+        const avgIndirectPerOrder = ordersInMonth.length > 0
+          ? totalFilteredIndirect / ordersInMonth.length
+          : totalFilteredIndirect;
+
+        // Lista de meses disponíveis para seleção rápida
+        const distinctMonths = Array.from(
+          new Set(
+            [
+              new Date().toISOString().slice(0, 7),
+              ...indirectCosts.map((c) => (c.competence || '').slice(0, 7)),
+              ...orders.map((o) => (o.openingDate || o.productionStart || '').slice(0, 7)),
+            ].filter(Boolean)
+          )
+        ).sort().reverse();
+
+        return (
+          <section className="space-y-6">
+            {/* Header com Contexto de Competência Mensal */}
+            <div className="bg-white rounded-2xl border border-[#dec1af] p-6 shadow-xs">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="p-2 rounded-xl bg-amber-100 text-[#954a00]">
+                      <Calendar className="w-5 h-5" />
+                    </span>
+                    <h2 className="font-black text-xl text-[#1a1c1b]">
+                      Custos Indiretos Gerais de Fabricação (CIF)
+                    </h2>
+                  </div>
+                  <p className="text-xs text-[#574335] mt-1 max-w-2xl">
+                    Cadastre despesas industriais indiretas (energia, aluguel, utilidades, terceirizados). 
+                    Cada lançamento possui <strong>data de lançamento</strong> para apuração do rateio exato no mês correspondente da Ordem de Produção.
+                  </p>
+                </div>
+
+                {/* Filtro do Mês a ser analisado */}
+                <div className="flex items-center gap-2 bg-[#f4f3f1] p-2 rounded-xl border border-[#dec1af]/50">
+                  <div className="text-right pr-2 border-r border-[#dec1af]/40">
+                    <span className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider">
+                      Mês Analisado
+                    </span>
+                    <span className="text-xs font-black text-[#954a00]">
+                      {indirectMonthFilter === 'ALL' ? 'Todos os Meses' : `${indirectMonthFilter.slice(5, 7)}/${indirectMonthFilter.slice(0, 4)}`}
+                    </span>
+                  </div>
+
+                  <input
+                    type="month"
+                    value={indirectMonthFilter === 'ALL' ? '' : indirectMonthFilter}
+                    onChange={(e) => setIndirectMonthFilter(e.target.value || 'ALL')}
+                    className="px-2 py-1.5 bg-white border border-[#dec1af] rounded-lg text-xs font-bold text-[#1a1c1b] focus:outline-none focus:ring-2 focus:ring-[#954a00]"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => setIndirectMonthFilter(indirectMonthFilter === 'ALL' ? new Date().toISOString().slice(0, 7) : 'ALL')}
+                    className="px-2.5 py-1.5 bg-white hover:bg-stone-100 border border-[#dec1af] rounded-lg text-[11px] font-bold text-[#574335] transition-colors"
+                  >
+                    {indirectMonthFilter === 'ALL' ? 'Mês Atual' : 'Ver Todos'}
+                  </button>
+                </div>
               </div>
-            ))}
-          </div>
-        </section>
-      )}
+
+              {/* Indicadores do Mês Analisado */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6 pt-6 border-t border-[#dec1af]/30">
+                <div className="p-3.5 rounded-xl bg-amber-50/60 border border-amber-200/80">
+                  <span className="block text-[10px] font-bold uppercase text-amber-900 tracking-wider">
+                    Total Indireto do Mês
+                  </span>
+                  <strong className="text-xl font-black text-[#954a00]">
+                    {formatCurrency(totalFilteredIndirect)}
+                  </strong>
+                  <span className="block text-[10px] text-amber-800 mt-0.5">
+                    {indirectMonthFilter === 'ALL' ? 'Acumulado geral' : `Competência ${indirectMonthFilter.slice(5, 7)}/${indirectMonthFilter.slice(0, 4)}`}
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-stone-50 border border-stone-200">
+                  <span className="block text-[10px] font-bold uppercase text-stone-600 tracking-wider">
+                    Lançamentos
+                  </span>
+                  <strong className="text-xl font-black text-stone-900">
+                    {filteredIndirectCosts.length}
+                  </strong>
+                  <span className="block text-[10px] text-stone-500 mt-0.5">
+                    {filteredIndirectCosts.length === 1 ? '1 custo registrado' : `${filteredIndirectCosts.length} custos registrados`}
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-stone-50 border border-stone-200">
+                  <span className="block text-[10px] font-bold uppercase text-stone-600 tracking-wider">
+                    OPs no Período
+                  </span>
+                  <strong className="text-xl font-black text-stone-900">
+                    {ordersInMonth.length}
+                  </strong>
+                  <span className="block text-[10px] text-stone-500 mt-0.5">
+                    {ordersInMonth.length === 1 ? '1 ordem de produção' : `${ordersInMonth.length} ordens de produção`}
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-emerald-50/60 border border-emerald-200">
+                  <span className="block text-[10px] font-bold uppercase text-emerald-900 tracking-wider">
+                    Rateio Médio Estimado / OP
+                  </span>
+                  <strong className="text-xl font-black text-emerald-800">
+                    {formatCurrency(avgIndirectPerOrder)}
+                  </strong>
+                  <span className="block text-[10px] text-emerald-700 mt-0.5">
+                    Proporcional às horas/volume
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Formulário: Lançamento de Novo Custo Indireto com Data */}
+            <div className="bg-white rounded-2xl border border-[#dec1af] p-6 shadow-xs">
+              <div className="flex items-center justify-between pb-4 border-b border-[#dec1af]/30">
+                <div>
+                  <h3 className="font-bold text-sm text-[#1a1c1b] flex items-center gap-2">
+                    <Plus className="w-4 h-4 text-[#954a00]" />
+                    Novo Lançamento de Custo Indireto (CIF)
+                  </h3>
+                  <p className="text-[11px] text-[#574335]">
+                    Informe a data de competência para associar ao mês correto de rateio das OPs.
+                  </p>
+                </div>
+
+                {indirect.competence && (
+                  <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-200">
+                    Competência Selecionada: {indirect.competence.slice(5, 7)}/{indirect.competence.slice(0, 4)}
+                  </span>
+                )}
+              </div>
+
+              <form onSubmit={saveIndirect} className="space-y-4 mt-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                  {/* Data de Lançamento */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#574335] mb-1">
+                      Data de Lançamento *
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={indirect.competence}
+                      onChange={(e) => setIndirect({ ...indirect, competence: e.target.value })}
+                      className={inputClass}
+                    />
+                  </div>
+
+                  {/* Código */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#574335] mb-1">
+                      Código (opcional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder={`Ex: CIF-${String(indirectCosts.length + 1).padStart(3, '0')}`}
+                      value={indirect.code}
+                      onChange={(e) => setIndirect({ ...indirect, code: e.target.value })}
+                      className={inputClass}
+                    />
+                  </div>
+
+                  {/* Descrição */}
+                  <div className="sm:col-span-2">
+                    <label className="block text-[11px] font-bold text-[#574335] mb-1">
+                      Descrição do Custo Indireto *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ex: Energia Elétrica Fabril, Aluguel do Galpão, Água..."
+                      value={indirect.description}
+                      onChange={(e) => setIndirect({ ...indirect, description: e.target.value })}
+                      className={inputClass}
+                    />
+                  </div>
+
+                  {/* Categoria */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#574335] mb-1">
+                      Categoria do Custo *
+                    </label>
+                    <select
+                      value={indirect.category}
+                      onChange={(e) => setIndirect({ ...indirect, category: e.target.value })}
+                      className={inputClass}
+                    >
+                      <option value="Energia Elétrica Industrial">Energia Elétrica Industrial</option>
+                      <option value="Aluguel Fabril">Aluguel Fabril</option>
+                      <option value="Utilidades">Utilidades (Água, Gás)</option>
+                      <option value="Manutenção Predial">Manutenção Predial / Instalações</option>
+                      <option value="Serviços de Terceiros">Serviços de Terceiros</option>
+                      <option value="Limpeza e Higienização">Limpeza e Higienização</option>
+                      <option value="Segurança e Vigilância">Segurança e Vigilância</option>
+                      <option value="Insumos Indiretos">Insumos Indiretos / EPIs</option>
+                      <option value="Custos Gerais Fabris">Custos Gerais Fabris</option>
+                    </select>
+                  </div>
+
+                  {/* Classificação */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#574335] mb-1">
+                      Classificação *
+                    </label>
+                    <select
+                      value={indirect.classification}
+                      onChange={(e) => setIndirect({ ...indirect, classification: e.target.value as 'FIXO' | 'VARIAVEL' })}
+                      className={inputClass}
+                    >
+                      <option value="FIXO">Fixo</option>
+                      <option value="VARIAVEL">Variável</option>
+                    </select>
+                  </div>
+
+                  {/* Centro de Custo */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#574335] mb-1">
+                      Centro de Custo / Processo
+                    </label>
+                    <select
+                      value={indirect.processId}
+                      onChange={(e) => setIndirect({ ...indirect, processId: e.target.value })}
+                      className={inputClass}
+                    >
+                      <option value="">Geral da Fábrica (Comum a todas as etapas)</option>
+                      {processesList.map((proc) => (
+                        <option key={proc.id} value={proc.id}>
+                          {proc.code} - {proc.description}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Valor */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#574335] mb-1">
+                      Valor (R$) *
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required
+                      placeholder="0,00"
+                      value={indirect.amount}
+                      onChange={(e) => setIndirect({ ...indirect, amount: e.target.value })}
+                      className={inputClass}
+                    />
+                  </div>
+
+                  {/* Observação / Documento */}
+                  <div className="sm:col-span-2 md:col-span-4">
+                    <label className="block text-[11px] font-bold text-[#574335] mb-1">
+                      Observação / Documento Fiscal (opcional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Fatura 998243, Fornecedor Enel, ref. Setembro/2026..."
+                      value={indirect.observation}
+                      onChange={(e) => setIndirect({ ...indirect, observation: e.target.value })}
+                      className={inputClass}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 bg-[#954a00] hover:bg-[#7c3d00] text-white rounded-xl font-bold text-xs flex items-center gap-2 shadow-xs transition-colors"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Registrar Custo Indireto
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Listagem de Custos Indiretos Lançados */}
+            <div className="bg-white rounded-2xl border border-[#dec1af] p-6 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[#dec1af]/30">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-bold text-sm text-[#1a1c1b]">
+                    Custos Indiretos Registrados
+                  </h3>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-bold">
+                    {filteredIndirectCosts.length} {filteredIndirectCosts.length === 1 ? 'item' : 'itens'}
+                  </span>
+                </div>
+
+                {indirectMonthFilter !== 'ALL' && (
+                  <span className="text-xs text-[#574335]">
+                    Exibindo lançamentos do mês <strong>{indirectMonthFilter.slice(5, 7)}/{indirectMonthFilter.slice(0, 4)}</strong>
+                  </span>
+                )}
+              </div>
+
+              {filteredIndirectCosts.length === 0 ? (
+                <div className="py-12 text-center text-[#574335] space-y-2">
+                  <Calendar className="w-10 h-10 mx-auto text-stone-300" />
+                  <p className="font-bold text-sm text-stone-700">
+                    Nenhum custo indireto encontrado para {indirectMonthFilter === 'ALL' ? 'o período' : `o mês ${indirectMonthFilter.slice(5, 7)}/${indirectMonthFilter.slice(0, 4)}`}.
+                  </p>
+                  <p className="text-xs text-stone-500 max-w-md mx-auto">
+                    Utilize o formulário acima para registrar despesas industriais com a data do mês a ser analisado.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {filteredIndirectCosts.map((item) => {
+                    const proc = item.processId ? processesList.find((p) => p.id === item.processId) : null;
+                    const compDateFormatted = item.competence
+                      ? `${item.competence.slice(8, 10)}/${item.competence.slice(5, 7)}/${item.competence.slice(0, 4)}`
+                      : 'Sem data';
+                    const compMonth = item.competence ? `${item.competence.slice(5, 7)}/${item.competence.slice(0, 4)}` : '-';
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="p-4 rounded-xl bg-[#fcfbfa] hover:bg-stone-50 border border-[#dec1af]/60 transition-colors flex flex-col md:flex-row md:items-center justify-between gap-4"
+                      >
+                        <div className="space-y-1.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="px-2 py-0.5 rounded bg-amber-100 text-[#954a00] font-black text-[11px] border border-amber-200">
+                              {item.code}
+                            </span>
+
+                            <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-bold text-[11px] flex items-center gap-1">
+                              <Calendar className="w-3 h-3 text-stone-500" />
+                              Lançamento: {compDateFormatted}
+                            </span>
+
+                            <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-900 font-bold text-[10px] border border-amber-200">
+                              Mês de Rateio: {compMonth}
+                            </span>
+
+                            <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-600 font-medium text-[10px]">
+                              {item.category}
+                            </span>
+
+                            <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${
+                              item.classification === 'FIXO'
+                                ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                                : 'bg-purple-50 text-purple-800 border border-purple-200'
+                            }`}>
+                              {item.classification}
+                            </span>
+
+                            {proc && (
+                              <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold">
+                                CC: {proc.code} - {proc.description}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="text-sm font-bold text-[#1a1c1b]">
+                            {item.description}
+                          </div>
+
+                          {item.observation && (
+                            <p className="text-xs text-stone-500 italic">
+                              {item.observation}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between md:justify-end gap-4 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-[#dec1af]/30">
+                          <div className="text-right">
+                            <span className="block text-[10px] uppercase font-bold text-stone-500">
+                              Valor do Lançamento
+                            </span>
+                            <span className="text-lg font-black text-[#954a00]">
+                              {formatCurrency(item.amount)}
+                            </span>
+                          </div>
+
+                          {/* Botão de Excluir Lançamento */}
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteIndirect(item)}
+                            title="Excluir Custo Indireto"
+                            className="p-2.5 text-rose-600 hover:text-white hover:bg-rose-600 bg-rose-50 border border-rose-200 rounded-xl transition-all shadow-2xs"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </section>
+        );
+      })()}
 
       {/* ========================================================================= */}
       {/* MODAL: HISTÓRICO DE COMPETÊNCIAS DO COLABORADOR (3. Integridade Histórica) */}
